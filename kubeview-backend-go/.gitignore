@@ -1,0 +1,7 @@
+# Compiled binary — built with `go build`
+kubeview-backend-go
+kubeview-api
+
+# Go test/coverage artefacts
+*.test
+*.out
