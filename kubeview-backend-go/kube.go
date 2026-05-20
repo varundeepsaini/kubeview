@@ -19,7 +19,7 @@ import (
 
 // Client wraps a Kubernetes clientset plus contextual info from the kubeconfig.
 type Client struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 	discovery discovery.DiscoveryInterface
 	context   string
 	cluster   string

@@ -20,6 +20,15 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run wires up the kube client + HTTP server and blocks until SIGINT/SIGTERM,
+// then triggers graceful shutdown. Split out from main() so tests can drive
+// the same code path with a controllable signal channel.
+func run() error {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = defaultPort
@@ -27,7 +36,7 @@ func main() {
 
 	client, err := NewClient()
 	if err != nil {
-		log.Fatalf("failed to initialise kubernetes client: %v", err)
+		return err
 	}
 
 	server := &http.Server{
@@ -38,22 +47,34 @@ func main() {
 		IdleTimeout:  idleTimeout,
 	}
 
-	go func() {
-		log.Printf("KubeView API running on http://localhost:%s", port)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("server failed: %v", err)
-		}
-	}()
-
-	// Wait for SIGINT/SIGTERM, then shut down cleanly.
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	<-stop
+	return serve(server, stop)
+}
 
-	log.Println("shutting down...")
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("graceful shutdown failed: %v", err)
+// serve runs the HTTP server until the stop channel fires, then performs a
+// graceful shutdown bounded by shutdownTimeout. The stop channel is a
+// parameter so tests can substitute it.
+func serve(server *http.Server, stop <-chan os.Signal) error {
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("KubeView API running on http://localhost%s", server.Addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-stop:
+		log.Println("shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			return err
+		}
+		return nil
 	}
 }
