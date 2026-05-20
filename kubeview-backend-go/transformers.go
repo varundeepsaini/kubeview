@@ -484,24 +484,24 @@ func containerState(cs *corev1.ContainerStatus) string {
 
 // volumeType mirrors the JS trick of picking the first non-"name" key of a
 // Volume object. corev1.VolumeSource is a struct of pointers, exactly one of
-// which is non-nil for a given volume; we report the field name of that one.
+// which is non-nil for a given volume; we report the JSON tag of that field.
+// Using the JSON tag (rather than lowercasing the Go field name) keeps the
+// output aligned with the JS backend for acronym-prefixed types like NFS,
+// iSCSI, CSI, RBD, FC.
 func volumeType(vs corev1.VolumeSource) string {
 	v := reflect.ValueOf(vs)
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		f := v.Field(i)
 		if f.Kind() == reflect.Ptr && !f.IsNil() {
-			return lowerFirst(t.Field(i).Name)
+			tag := t.Field(i).Tag.Get("json")
+			if comma := strings.Index(tag, ","); comma >= 0 {
+				tag = tag[:comma]
+			}
+			return tag
 		}
 	}
 	return "unknown"
-}
-
-func lowerFirst(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToLower(s[:1]) + s[1:]
 }
 
 func formatServicePort(p corev1.ServicePort) string {
