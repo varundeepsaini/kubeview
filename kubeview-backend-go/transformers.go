@@ -440,9 +440,10 @@ func maxInt32(a, b int32) int32 {
 	return b
 }
 
-// podStatus mirrors getPodStatus() from kubeview-backend/lib/transformers.js —
-// surface waiting/terminated container reasons first, otherwise fall back to
-// the pod phase.
+// podStatus surfaces a waiting or terminated container reason as the pod's
+// effective status when one is present, otherwise falls back to the pod phase.
+// This matches the failure modes (CrashLoopBackOff, ImagePullBackOff, ...)
+// that users expect to see in a dashboard, which the phase field alone hides.
 func podStatus(pod *corev1.Pod) string {
 	if pod.DeletionTimestamp != nil {
 		return "Terminating"
