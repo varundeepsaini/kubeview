@@ -1,4 +1,4 @@
-# kubeview-backend-go
+# kubeview-backend
 
 Go backend for KubeView. Serves the REST API on port `5501` consumed by `kubeview-frontend/`.
 
@@ -10,7 +10,7 @@ Go backend for KubeView. Serves the REST API on port `5501` consumed by `kubevie
 ## Run
 
 ```bash
-cd kubeview-backend-go
+cd kubeview-backend
 go run .
 ```
 

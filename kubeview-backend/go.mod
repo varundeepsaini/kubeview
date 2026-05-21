@@ -1,4 +1,4 @@
-module github.com/ankur-kalita/kubeview/kubeview-backend-go
+module github.com/ankur-kalita/kubeview/kubeview-backend
 
 go 1.26.2
 
