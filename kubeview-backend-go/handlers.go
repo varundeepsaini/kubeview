@@ -209,7 +209,9 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 }
 
 // writeError maps Kubernetes API errors to appropriate HTTP statuses and
-// logs unexpected ones. Mirrors the JS error middleware in server.js.
+// logs unexpected ones. Errors carrying a *apierrors.StatusError surface
+// their original status code (e.g. 403, 404); everything else falls back
+// to 500.
 func writeError(w http.ResponseWriter, err error) {
 	var status int
 	var statusErr *apierrors.StatusError

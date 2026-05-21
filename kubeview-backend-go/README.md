@@ -1,6 +1,6 @@
 # kubeview-backend-go
 
-Go reimplementation of the KubeView backend. Drop-in replacement for `kubeview-backend/`: same REST API surface, same port (`5501`), so the existing `kubeview-frontend/` works against it without changes.
+Go backend for KubeView. Serves the REST API on port `5501` consumed by `kubeview-frontend/`.
 
 ## Prerequisites
 
@@ -45,10 +45,27 @@ Both follow the same conventions as `kubectl`.
 
 ## API
 
-Identical to the Node.js backend — see the top-level `README.md` for the endpoint table.
+All endpoints return JSON. List endpoints accept an optional `?namespace=<ns>` query parameter.
 
-## Differences from the Node.js backend
+| Method | Path | Description |
+| --- | --- | --- |
+| GET | `/api/health` | Liveness probe |
+| GET | `/api/cluster` | Cluster info (version, platform, node count, current context) |
+| GET | `/api/namespaces` | List namespaces |
+| GET | `/api/pods` | List pods |
+| GET | `/api/pods/{namespace}/{name}` | Single pod detail |
+| GET | `/api/pods/{namespace}/{name}/logs` | Pod logs (`?container=<name>`, `?tailLines=<n>`) |
+| GET | `/api/deployments` | List deployments |
+| GET | `/api/services` | List services |
+| GET | `/api/nodes` | List nodes |
+| GET | `/api/events` | List events |
 
-- Built as a single static binary instead of a `node_modules` tree.
-- HTTP server has explicit read/write/idle timeouts and graceful shutdown on `SIGINT`/`SIGTERM`.
-- Kubernetes API errors with a `Status` payload (e.g. 404) propagate their HTTP status to the response instead of always returning 500.
+CORS is whitelisted to `http://localhost:5500` (the frontend dev server).
+
+## Tests
+
+```bash
+go test ./...           # full suite
+go test -race ./...     # with race detector
+go test -cover ./...    # with coverage
+```
