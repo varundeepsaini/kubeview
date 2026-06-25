@@ -25,9 +25,8 @@ func main() {
 	}
 }
 
-// run wires up the kube client + HTTP server and blocks until SIGINT/SIGTERM,
-// then triggers graceful shutdown. Split out from main() so tests can drive
-// the same code path with a controllable signal channel.
+// run is split from main() so tests can drive the same code path with a
+// controllable signal channel.
 func run() error {
 	port := os.Getenv("PORT")
 	if port == "" {

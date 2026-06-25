@@ -162,6 +162,11 @@ func getAge(t metav1.Time) string {
 	}
 	d := time.Since(t.Time)
 	secs := int(d.Seconds())
+	// A future creationTimestamp (clock skew) yields a negative duration; clamp
+	// to 0 so the UI shows "0s" instead of a nonsensical "-5s".
+	if secs < 0 {
+		secs = 0
+	}
 	if secs < 60 {
 		return fmt.Sprintf("%ds", secs)
 	}

@@ -261,7 +261,8 @@ func TestVolumeType(t *testing.T) {
 	})
 	t.Run("downwardAPI", func(t *testing.T) {
 		got := volumeType(corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{}})
-		// JSON tag is "downwardAPI"; lowerFirst("DownwardAPI") = "downwardAPI". Matches.
+		// Acronym gotcha: the field's JSON tag is "downwardAPI" (not "downwardapi"),
+		// so volumeType's tag-reflection must surface that exact casing.
 		if got != "downwardAPI" {
 			t.Fatalf("got %q", got)
 		}

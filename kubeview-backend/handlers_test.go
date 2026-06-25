@@ -90,7 +90,6 @@ func TestHandle_Cluster(t *testing.T) {
 
 	t.Run("error from kube returns 500", func(t *testing.T) {
 		srv, c := newTestServer(t, &version.Info{GitVersion: "v1", Platform: "p"})
-		// inject error
 		cs := c.clientset
 		// reactors only work on the fake clientset which we have direct access to via Client
 		injectListNodesError(t, cs, errors.New("boom"))
@@ -102,8 +101,15 @@ func TestHandle_Cluster(t *testing.T) {
 		if err := json.Unmarshal(body, &e); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if e.Status != 500 || !strings.Contains(e.Error, "boom") {
+		if e.Status != 500 {
 			t.Fatalf("err response = %+v", e)
+		}
+		// 5xx responses must NOT leak the raw internal error to the client.
+		if strings.Contains(e.Error, "boom") {
+			t.Fatalf("5xx body leaked internal error detail: %q", e.Error)
+		}
+		if e.Error != "Internal server error" {
+			t.Fatalf("err message = %q, want generic 5xx message", e.Error)
 		}
 	})
 }
@@ -306,7 +312,6 @@ func TestHandle_PodLogs(t *testing.T) {
 
 	t.Run("missing pod -> 404", func(t *testing.T) {
 		srv, c := newTestServer(t, nil)
-		// inject not-found error on the log get
 		cs := c.clientset
 		injectLogsErrorReactor(t, cs, apierrors.NewNotFound(corev1.Resource("pods"), "nope"))
 		resp, body := getJSON(t, srv, "/api/pods/default/nope/logs", nil)
@@ -1053,7 +1058,8 @@ func TestHandle_PodLogs_TailLinesAtBoundary(t *testing.T) {
 	})
 	cases := map[string]int64{
 		"1":       1,
-		"1000000": 1000000,
+		"5000":    maxTailLines, // exactly at the cap, passed through
+		"1000000": maxTailLines, // above the cap, clamped down
 	}
 	for raw, want := range cases {
 		t.Run(raw, func(t *testing.T) {
