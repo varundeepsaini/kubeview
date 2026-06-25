@@ -2,25 +2,61 @@ version: "2"
 
 run:
   timeout: 5m
+  tests: true
 
 linters:
-  # Defaults (errcheck, govet, ineffassign, staticcheck, unused) stay on; the
-  # list below layers strict extras on top for correctness, security, and
-  # bug-prone-pattern detection.
-  enable:
-    - bodyclose      # HTTP/response bodies must be closed
-    - errorlint      # correct errors.Is/As and %w usage
-    - gocritic       # opinionated correctness/style diagnostics
-    - gosec          # security issues (G-rules)
-    - misspell       # spelling in comments/strings
-    - nilerr         # returning nil after a non-nil error
-    - prealloc       # slices that can be preallocated
-    - revive         # broad style/lint replacement for golint
-    - unconvert      # redundant type conversions
-    - unparam        # unused function parameters/results
-    - whitespace     # leading/trailing whitespace in funcs
+  # Maximal strictness: enable every non-deprecated linter, then turn off only
+  # the handful that need project-specific config to be meaningful.
+  default: all
+  disable:
+    - depguard      # needs an explicit allow/deny import list to be useful
+
+  settings:
+    cyclop:
+      max-complexity: 12
+    gocyclo:
+      min-complexity: 12
+    gocognit:
+      min-complexity: 20
+    funlen:
+      lines: 80
+      statements: 50
+    nestif:
+      min-complexity: 4
+    lll:
+      line-length: 120
+    revive:
+      enable-all-rules: true
+    govet:
+      enable-all: true
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: true
+
+  exclusions:
+    rules:
+      # Test files get a lighter touch on a few noisy-by-design linters.
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
+          - cyclop
+          - gocyclo
+          - dupl
+          - maintidx
+          - gochecknoglobals
+          - varnamelen
 
 formatters:
   enable:
-    - gofmt
-    - goimports
+    - gofumpt        # stricter superset of gofmt
+    - goimports      # group + sort imports
+    - golines        # wrap long lines
+  settings:
+    golines:
+      max-len: 120
+    goimports:
+      local-prefixes:
+        - github.com/ankur-kalita/kubeview
