@@ -13,8 +13,14 @@ import (
 
 const frontendOrigin = "http://localhost:5500"
 
-// withCORS allows the frontend to call the API from a different origin.
-// Kept narrow on purpose — only the dev frontend is whitelisted.
+// maxTailLines caps the number of log lines a single request may pull. Without
+// a bound a client can ask for an arbitrarily large tail, forcing the server to
+// buffer the entire stream in memory (io.ReadAll in GetPodLogs) — a cheap
+// memory-exhaustion DoS. 5000 lines is well beyond any practical UI need.
+const maxTailLines = 5000
+
+// withCORS allows the API to be called cross-origin. Narrow on purpose: only
+// the whitelisted dev frontend, never "*".
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", frontendOrigin)
@@ -113,6 +119,9 @@ func handlePodLogs(c *Client) http.HandlerFunc {
 		if raw := q.Get("tailLines"); raw != "" {
 			if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n > 0 {
 				tailLines = n
+				if tailLines > maxTailLines {
+					tailLines = maxTailLines
+				}
 			}
 		}
 		logs, err := c.GetPodLogs(
@@ -213,16 +222,25 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 // their original status code (e.g. 403, 404); everything else falls back
 // to 500.
 func writeError(w http.ResponseWriter, err error) {
-	var status int
+	status := http.StatusInternalServerError
 	var statusErr *apierrors.StatusError
 	if errors.As(err, &statusErr) {
-		status = int(statusErr.ErrStatus.Code)
-	}
-	if status == 0 {
-		status = http.StatusInternalServerError
+		if code := int(statusErr.ErrStatus.Code); code >= 400 && code <= 599 {
+			status = code
+		}
 	}
 	log.Printf("API Error: %v", err)
-	writeJSONError(w, status, err.Error())
+	// Full detail stays in the server log above; the client gets only the
+	// generic status text. Raw Kubernetes errors can carry internal cluster
+	// detail (RBAC subjects, service-account names, API-server URLs) — even on
+	// 4xx like 403 Forbidden — that the UI doesn't need and shouldn't expose.
+	msg := "Internal server error"
+	if status < http.StatusInternalServerError {
+		if text := http.StatusText(status); text != "" {
+			msg = text
+		}
+	}
+	writeJSONError(w, status, msg)
 }
 
 func isNotFound(err error) bool {

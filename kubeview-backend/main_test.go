@@ -43,8 +43,6 @@ func TestServe_ListenError(t *testing.T) {
 	go func() { occupierDone <- serve(occupier, stopOccupier) }()
 	waitForListen(t, addr)
 
-	// Now try to start a second server on the same address — ListenAndServe
-	// should error immediately.
 	collider := &http.Server{Addr: addr, Handler: http.NewServeMux()}
 	colliderStop := make(chan os.Signal, 1)
 	colliderDone := make(chan error, 1)
@@ -84,7 +82,6 @@ func TestRun_PropagatesClientError(t *testing.T) {
 // NewClient errors first; we just need *some* error to bail run() before
 // it blocks).
 func TestRun_DefaultsPortWhenUnset(t *testing.T) {
-	// Force NewClient to fail so run() returns quickly without binding.
 	bad := t.TempDir() + "/missing"
 	t.Setenv("KUBECONFIG", bad)
 	t.Setenv("PORT", "")

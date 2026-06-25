@@ -552,7 +552,6 @@ func TestClient_GetClusterInfo(t *testing.T) {
 	})
 
 	t.Run("propagates server-version error", func(t *testing.T) {
-		// Build a Client whose Discovery returns an error from ServerVersion().
 		c := &Client{
 			clientset: fake.NewClientset(),
 			discovery: errDiscovery{err: errors.New("api unreachable")},
