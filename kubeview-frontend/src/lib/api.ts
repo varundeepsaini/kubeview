@@ -86,8 +86,8 @@ export interface Service {
   name: string;
   namespace: string;
   type: string;
-  clusterIP: string;
-  externalIP: string;
+  clusterIp: string;
+  externalIp: string;
   ports: string[];
   selector: Record<string, string>;
   labels: Record<string, string>;

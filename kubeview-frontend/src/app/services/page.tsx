@@ -66,8 +66,8 @@ export default function ServicesPage() {
                       {svc.type}
                     </span>
                   </td>
-                  <td className="p-4 font-mono text-xs text-muted">{svc.clusterIP}</td>
-                  <td className="p-4 font-mono text-xs text-muted">{svc.externalIP}</td>
+                  <td className="p-4 font-mono text-xs text-muted">{svc.clusterIp}</td>
+                  <td className="p-4 font-mono text-xs text-muted">{svc.externalIp}</td>
                   <td className="p-4 font-mono text-xs text-muted">{svc.ports.join(", ")}</td>
                   <td className="p-4 text-muted">{svc.age}</td>
                 </tr>

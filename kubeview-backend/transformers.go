@@ -96,8 +96,8 @@ type Service struct {
 	Name       string            `json:"name"`
 	Namespace  string            `json:"namespace"`
 	Type       string            `json:"type"`
-	ClusterIP  string            `json:"clusterIP"`
-	ExternalIP string            `json:"externalIP"`
+	ClusterIP  string            `json:"clusterIp"`
+	ExternalIP string            `json:"externalIp"`
 	Ports      []string          `json:"ports"`
 	Selector   map[string]string `json:"selector"`
 	Labels     map[string]string `json:"labels"`
