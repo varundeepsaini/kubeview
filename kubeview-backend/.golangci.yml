@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # Defaults (errcheck, govet, ineffassign, staticcheck, unused) stay on; the
+  # list below layers strict extras on top for correctness, security, and
+  # bug-prone-pattern detection.
+  enable:
+    - bodyclose      # HTTP/response bodies must be closed
+    - errorlint      # correct errors.Is/As and %w usage
+    - gocritic       # opinionated correctness/style diagnostics
+    - gosec          # security issues (G-rules)
+    - misspell       # spelling in comments/strings
+    - nilerr         # returning nil after a non-nil error
+    - prealloc       # slices that can be preallocated
+    - revive         # broad style/lint replacement for golint
+    - unconvert      # redundant type conversions
+    - unparam        # unused function parameters/results
+    - whitespace     # leading/trailing whitespace in funcs
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
