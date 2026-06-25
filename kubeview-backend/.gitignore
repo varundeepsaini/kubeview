@@ -5,3 +5,6 @@ kubeview-api
 # Go test/coverage artefacts
 *.test
 *.out
+
+# compiled binary
+kubeview-backend
