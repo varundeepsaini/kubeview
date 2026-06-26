@@ -5,3 +5,5 @@ node_modules/
 *.pdf
 *.docx
 a.md
+
+.claude/worktrees/

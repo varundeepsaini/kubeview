@@ -14,12 +14,45 @@ import (
 // Response shapes — JSON tags must match what the frontend expects in
 // kubeview-frontend/src/lib/api.ts. Any drift here breaks the dashboard.
 
+// Shared status/placeholder strings used across transformers and the JSON
+// responses they produce.
+const (
+	statusUnknown     = "Unknown"
+	statusPending     = "Pending"
+	statusNotReady    = "NotReady"
+	statusReady       = "Ready"
+	statusWaiting     = "Waiting"
+	valueNA           = "N/A"
+	valueNone         = "None"
+	valueNoneBrackets = "<none>"
+	typeClusterIP     = "ClusterIP"
+	emptyString       = ""
+)
+
+// Duration breakpoints used when rendering a human-readable age string.
+const (
+	secondsPerMinute = 60
+	minutesPerHour   = 60
+	hoursPerDay      = 24
+	minEventCount    = 1
+	// zeroCount is used both as a clamp floor for negative durations and to
+	// detect empty collections.
+	zeroCount = 0
+)
+
+// podSummary aggregates per-container counters for a pod.
+type podSummary struct {
+	ready    int
+	total    int
+	restarts int32
+}
+
 type ClusterInfo struct {
 	Version     string `json:"version"`
 	Platform    string `json:"platform"`
-	NodeCount   int    `json:"nodeCount"`
 	Context     string `json:"context"`
 	ClusterName string `json:"clusterName"`
+	NodeCount   int    `json:"nodeCount"`
 }
 
 type Namespace struct {
@@ -30,33 +63,11 @@ type Namespace struct {
 	Age       string            `json:"age"`
 }
 
-type Container struct {
-	Name         string   `json:"name"`
-	Image        string   `json:"image"`
-	Ports        []string `json:"ports"`
-	Ready        bool     `json:"ready"`
-	State        string   `json:"state"`
-	RestartCount int32    `json:"restartCount"`
-}
-
-type PodCondition struct {
-	Type           string `json:"type"`
-	Status         string `json:"status"`
-	Reason         string `json:"reason,omitempty"`
-	LastTransition string `json:"lastTransition,omitempty"`
-}
-
-type Volume struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
 type Pod struct {
 	Name       string            `json:"name"`
 	Namespace  string            `json:"namespace"`
 	Status     string            `json:"status"`
 	Ready      string            `json:"ready"`
-	Restarts   int32             `json:"restarts"`
 	Node       string            `json:"node"`
 	IP         string            `json:"ip"`
 	Labels     map[string]string `json:"labels"`
@@ -65,24 +76,12 @@ type Pod struct {
 	Containers []Container       `json:"containers"`
 	Conditions []PodCondition    `json:"conditions"`
 	Volumes    []Volume          `json:"volumes"`
-}
-
-type DeploymentCondition struct {
-	Type           string `json:"type"`
-	Status         string `json:"status"`
-	Reason         string `json:"reason,omitempty"`
-	Message        string `json:"message,omitempty"`
-	LastTransition string `json:"lastTransition,omitempty"`
+	Restarts   int32             `json:"restarts"`
 }
 
 type Deployment struct {
 	Name              string                `json:"name"`
 	Namespace         string                `json:"namespace"`
-	Replicas          int32                 `json:"replicas"`
-	ReadyReplicas     int32                 `json:"readyReplicas"`
-	DesiredReplicas   int32                 `json:"desiredReplicas"`
-	UpdatedReplicas   int32                 `json:"updatedReplicas"`
-	AvailableReplicas int32                 `json:"availableReplicas"`
 	Strategy          string                `json:"strategy"`
 	Labels            map[string]string     `json:"labels"`
 	Selector          map[string]string     `json:"selector"`
@@ -90,6 +89,11 @@ type Deployment struct {
 	Age               string                `json:"age"`
 	Conditions        []DeploymentCondition `json:"conditions"`
 	Images            []string              `json:"images"`
+	Replicas          int32                 `json:"replicas"`
+	ReadyReplicas     int32                 `json:"readyReplicas"`
+	DesiredReplicas   int32                 `json:"desiredReplicas"`
+	UpdatedReplicas   int32                 `json:"updatedReplicas"`
+	AvailableReplicas int32                 `json:"availableReplicas"`
 }
 
 type Service struct {
@@ -98,146 +102,155 @@ type Service struct {
 	Type       string            `json:"type"`
 	ClusterIP  string            `json:"clusterIp"`
 	ExternalIP string            `json:"externalIp"`
-	Ports      []string          `json:"ports"`
 	Selector   map[string]string `json:"selector"`
 	Labels     map[string]string `json:"labels"`
 	CreatedAt  string            `json:"createdAt"`
 	Age        string            `json:"age"`
-}
-
-type NodeCondition struct {
-	Type    string `json:"type"`
-	Status  string `json:"status"`
-	Reason  string `json:"reason,omitempty"`
-	Message string `json:"message,omitempty"`
-}
-
-type NodeAddress struct {
-	Type    string `json:"type"`
-	Address string `json:"address"`
-}
-
-type NodeInfo struct {
-	Name             string            `json:"name"`
-	Status           string            `json:"status"`
-	Roles            []string          `json:"roles"`
-	Version          string            `json:"version"`
-	OS               string            `json:"os"`
-	Arch             string            `json:"arch"`
-	ContainerRuntime string            `json:"containerRuntime"`
-	CPU              string            `json:"cpu"`
-	Memory           string            `json:"memory"`
-	Pods             string            `json:"pods"`
-	Labels           map[string]string `json:"labels"`
-	Conditions       []NodeCondition   `json:"conditions"`
-	CreatedAt        string            `json:"createdAt"`
-	Age              string            `json:"age"`
-	Addresses        []NodeAddress     `json:"addresses"`
-}
-
-type KubeEvent struct {
-	Type      string `json:"type"`
-	Reason    string `json:"reason"`
-	Message   string `json:"message"`
-	Object    string `json:"object"`
-	Namespace string `json:"namespace"`
-	FirstSeen string `json:"firstSeen"`
-	LastSeen  string `json:"lastSeen"`
-	Count     int32  `json:"count"`
-	Source    string `json:"source"`
+	Ports      []string          `json:"ports"`
 }
 
 // --- helpers ---
 
 func formatTime(t metav1.Time) string {
 	if t.IsZero() {
-		return ""
+		return emptyString
 	}
+
 	return t.UTC().Format(time.RFC3339)
 }
 
 func getAge(t metav1.Time) string {
 	if t.IsZero() {
-		return "Unknown"
+		return statusUnknown
 	}
+
 	d := time.Since(t.Time)
 	secs := int(d.Seconds())
 	// A future creationTimestamp (clock skew) yields a negative duration; clamp
 	// to 0 so the UI shows "0s" instead of a nonsensical "-5s".
-	if secs < 0 {
-		secs = 0
-	}
-	if secs < 60 {
+	secs = max(secs, zeroCount)
+
+	if secs < secondsPerMinute {
 		return fmt.Sprintf("%ds", secs)
 	}
-	mins := secs / 60
-	if mins < 60 {
+
+	mins := secs / secondsPerMinute
+	if mins < minutesPerHour {
 		return fmt.Sprintf("%dm", mins)
 	}
-	hours := mins / 60
-	if hours < 24 {
+
+	hours := mins / minutesPerHour
+	if hours < hoursPerDay {
 		return fmt.Sprintf("%dh", hours)
 	}
-	return fmt.Sprintf("%dd", hours/24)
+
+	return fmt.Sprintf("%dd", hours/hoursPerDay)
 }
 
 func emptyIfNil(m map[string]string) map[string]string {
 	if m == nil {
 		return map[string]string{}
 	}
+
 	return m
 }
 
 // --- transformers ---
 
-func transformNamespace(ns corev1.Namespace) Namespace {
-	status := string(ns.Status.Phase)
-	if status == "" {
-		status = "Unknown"
+func transformNamespace(namespace corev1.Namespace) Namespace {
+	status := string(namespace.Status.Phase)
+	if status == emptyString {
+		status = statusUnknown
 	}
+
 	return Namespace{
-		Name:      ns.Name,
+		Name:      namespace.Name,
 		Status:    status,
-		Labels:    emptyIfNil(ns.Labels),
-		CreatedAt: formatTime(ns.CreationTimestamp),
-		Age:       getAge(ns.CreationTimestamp),
+		Labels:    emptyIfNil(namespace.Labels),
+		CreatedAt: formatTime(namespace.CreationTimestamp),
+		Age:       getAge(namespace.CreationTimestamp),
 	}
 }
 
 func transformPod(pod *corev1.Pod) Pod {
-	readyCount := 0
-	totalCount := len(pod.Status.ContainerStatuses)
-	if totalCount == 0 {
-		totalCount = len(pod.Spec.Containers)
-	}
-	var restarts int32
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.Ready {
-			readyCount++
-		}
-		restarts += cs.RestartCount
+	summary := podContainerSummary(pod)
+
+	node := pod.Spec.NodeName
+	if node == emptyString {
+		node = statusPending
 	}
 
-	containers := make([]Container, 0, len(pod.Spec.Containers))
-	for i, c := range pod.Spec.Containers {
-		ports := make([]string, 0, len(c.Ports))
-		for _, p := range c.Ports {
-			ports = append(ports, fmt.Sprintf("%d/%s", p.ContainerPort, p.Protocol))
+	podIP := pod.Status.PodIP
+	if podIP == emptyString {
+		podIP = valueNA
+	}
+
+	return Pod{
+		Name:       pod.Name,
+		Namespace:  pod.Namespace,
+		Status:     podStatus(pod),
+		Ready:      fmt.Sprintf("%d/%d", summary.ready, summary.total),
+		Restarts:   summary.restarts,
+		Node:       node,
+		IP:         podIP,
+		Labels:     emptyIfNil(pod.Labels),
+		CreatedAt:  formatTime(pod.CreationTimestamp),
+		Age:        getAge(pod.CreationTimestamp),
+		Containers: podContainers(pod),
+		Conditions: podConditions(pod),
+		Volumes:    podVolumes(pod),
+	}
+}
+
+// podContainerSummary reports the number of ready containers, the total
+// container count, and the aggregate restart count for a pod.
+func podContainerSummary(pod *corev1.Pod) podSummary {
+	total := len(pod.Status.ContainerStatuses)
+	if total == zeroCount {
+		total = len(pod.Spec.Containers)
+	}
+
+	summary := podSummary{ready: zeroCount, total: total, restarts: zeroCount}
+
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Ready {
+			summary.ready++
 		}
+
+		summary.restarts += status.RestartCount
+	}
+
+	return summary
+}
+
+func podContainers(pod *corev1.Pod) []Container {
+	containers := make([]Container, zeroCount, len(pod.Spec.Containers))
+
+	for idx, spec := range pod.Spec.Containers {
+		ports := make([]string, zeroCount, len(spec.Ports))
+		for _, port := range spec.Ports {
+			ports = append(
+				ports,
+				fmt.Sprintf("%d/%s", port.ContainerPort, port.Protocol),
+			)
+		}
+
 		var (
 			ready        bool
 			restartCount int32
-			state        = "Waiting"
+			state        = statusWaiting
 		)
-		if i < len(pod.Status.ContainerStatuses) {
-			cs := pod.Status.ContainerStatuses[i]
+
+		if idx < len(pod.Status.ContainerStatuses) {
+			cs := pod.Status.ContainerStatuses[idx]
 			ready = cs.Ready
 			restartCount = cs.RestartCount
 			state = containerState(&cs)
 		}
+
 		containers = append(containers, Container{
-			Name:         c.Name,
-			Image:        c.Image,
+			Name:         spec.Name,
+			Image:        spec.Image,
 			Ports:        ports,
 			Ready:        ready,
 			State:        state,
@@ -245,7 +258,11 @@ func transformPod(pod *corev1.Pod) Pod {
 		})
 	}
 
-	conditions := make([]PodCondition, 0, len(pod.Status.Conditions))
+	return containers
+}
+
+func podConditions(pod *corev1.Pod) []PodCondition {
+	conditions := make([]PodCondition, zeroCount, len(pod.Status.Conditions))
 	for _, cond := range pod.Status.Conditions {
 		conditions = append(conditions, PodCondition{
 			Type:           string(cond.Type),
@@ -255,65 +272,32 @@ func transformPod(pod *corev1.Pod) Pod {
 		})
 	}
 
-	volumes := make([]Volume, 0, len(pod.Spec.Volumes))
-	for _, v := range pod.Spec.Volumes {
+	return conditions
+}
+
+func podVolumes(pod *corev1.Pod) []Volume {
+	volumes := make([]Volume, zeroCount, len(pod.Spec.Volumes))
+	for _, vol := range pod.Spec.Volumes {
 		volumes = append(volumes, Volume{
-			Name: v.Name,
-			Type: volumeType(v.VolumeSource),
+			Name: vol.Name,
+			Type: volumeType(vol.VolumeSource),
 		})
 	}
 
-	node := pod.Spec.NodeName
-	if node == "" {
-		node = "Pending"
-	}
-	ip := pod.Status.PodIP
-	if ip == "" {
-		ip = "N/A"
-	}
-
-	return Pod{
-		Name:       pod.Name,
-		Namespace:  pod.Namespace,
-		Status:     podStatus(pod),
-		Ready:      fmt.Sprintf("%d/%d", readyCount, totalCount),
-		Restarts:   restarts,
-		Node:       node,
-		IP:         ip,
-		Labels:     emptyIfNil(pod.Labels),
-		CreatedAt:  formatTime(pod.CreationTimestamp),
-		Age:        getAge(pod.CreationTimestamp),
-		Containers: containers,
-		Conditions: conditions,
-		Volumes:    volumes,
-	}
+	return volumes
 }
 
 func transformDeployment(dep appsv1.Deployment) Deployment {
-	conditions := make([]DeploymentCondition, 0, len(dep.Status.Conditions))
-	for _, cond := range dep.Status.Conditions {
-		conditions = append(conditions, DeploymentCondition{
-			Type:           string(cond.Type),
-			Status:         string(cond.Status),
-			Reason:         cond.Reason,
-			Message:        cond.Message,
-			LastTransition: formatTime(cond.LastTransitionTime),
-		})
-	}
-
-	images := make([]string, 0, len(dep.Spec.Template.Spec.Containers))
-	for _, c := range dep.Spec.Template.Spec.Containers {
-		images = append(images, c.Image)
-	}
-
 	var desired int32
 	if dep.Spec.Replicas != nil {
 		desired = *dep.Spec.Replicas
 	}
+
 	strategy := string(dep.Spec.Strategy.Type)
-	if strategy == "" {
+	if strategy == emptyString {
 		strategy = "RollingUpdate"
 	}
+
 	selector := map[string]string{}
 	if dep.Spec.Selector != nil {
 		selector = emptyIfNil(dep.Spec.Selector.MatchLabels)
@@ -332,30 +316,59 @@ func transformDeployment(dep appsv1.Deployment) Deployment {
 		Selector:          selector,
 		CreatedAt:         formatTime(dep.CreationTimestamp),
 		Age:               getAge(dep.CreationTimestamp),
-		Conditions:        conditions,
-		Images:            images,
+		Conditions:        deploymentConditions(dep),
+		Images:            deploymentImages(dep),
 	}
 }
 
+func deploymentConditions(dep appsv1.Deployment) []DeploymentCondition {
+	conditions := make(
+		[]DeploymentCondition,
+		zeroCount,
+		len(dep.Status.Conditions),
+	)
+	for _, cond := range dep.Status.Conditions {
+		conditions = append(conditions, DeploymentCondition{
+			Type:           string(cond.Type),
+			Status:         string(cond.Status),
+			Reason:         cond.Reason,
+			Message:        cond.Message,
+			LastTransition: formatTime(cond.LastTransitionTime),
+		})
+	}
+
+	return conditions
+}
+
+func deploymentImages(dep appsv1.Deployment) []string {
+	containers := dep.Spec.Template.Spec.Containers
+
+	images := make([]string, zeroCount, len(containers))
+	for _, container := range containers {
+		images = append(images, container.Image)
+	}
+
+	return images
+}
+
 func transformService(svc corev1.Service) Service {
-	ports := make([]string, 0, len(svc.Spec.Ports))
-	for _, p := range svc.Spec.Ports {
-		ports = append(ports, formatServicePort(p))
+	ports := make([]string, zeroCount, len(svc.Spec.Ports))
+	for _, port := range svc.Spec.Ports {
+		ports = append(ports, formatServicePort(port))
 	}
-	externalIP := "N/A"
-	if len(svc.Status.LoadBalancer.Ingress) > 0 && svc.Status.LoadBalancer.Ingress[0].IP != "" {
-		externalIP = svc.Status.LoadBalancer.Ingress[0].IP
-	} else if len(svc.Spec.ExternalIPs) > 0 {
-		externalIP = svc.Spec.ExternalIPs[0]
-	}
+
+	externalIP := serviceExternalIP(svc)
+
 	clusterIP := svc.Spec.ClusterIP
-	if clusterIP == "" {
-		clusterIP = "None"
+	if clusterIP == emptyString {
+		clusterIP = valueNone
 	}
+
 	svcType := string(svc.Spec.Type)
-	if svcType == "" {
-		svcType = "ClusterIP"
+	if svcType == emptyString {
+		svcType = typeClusterIP
 	}
+
 	return Service{
 		Name:       svc.Name,
 		Namespace:  svc.Namespace,
@@ -370,71 +383,114 @@ func transformService(svc corev1.Service) Service {
 	}
 }
 
-func transformNode(n corev1.Node) NodeInfo {
-	status := "NotReady"
-	for _, c := range n.Status.Conditions {
-		if c.Type == corev1.NodeReady && c.Status == corev1.ConditionTrue {
-			status = "Ready"
-			break
-		}
+// serviceExternalIP picks the load-balancer ingress IP when present, otherwise
+// the first declared external IP, falling back to a placeholder.
+func serviceExternalIP(svc corev1.Service) string {
+	ingress := svc.Status.LoadBalancer.Ingress
+	if len(ingress) > zeroCount && ingress[zeroCount].IP != emptyString {
+		return ingress[zeroCount].IP
 	}
 
-	roles := []string{}
-	for label := range n.Labels {
-		const prefix = "node-role.kubernetes.io/"
-		if strings.HasPrefix(label, prefix) {
-			roles = append(roles, strings.TrimPrefix(label, prefix))
-		}
-	}
-	if len(roles) == 0 {
-		roles = []string{"<none>"}
+	if len(svc.Spec.ExternalIPs) > zeroCount {
+		return svc.Spec.ExternalIPs[zeroCount]
 	}
 
-	conditions := make([]NodeCondition, 0, len(n.Status.Conditions))
-	for _, c := range n.Status.Conditions {
-		conditions = append(conditions, NodeCondition{
-			Type:    string(c.Type),
-			Status:  string(c.Status),
-			Reason:  c.Reason,
-			Message: c.Message,
-		})
-	}
+	return valueNA
+}
 
-	addresses := make([]NodeAddress, 0, len(n.Status.Addresses))
-	for _, a := range n.Status.Addresses {
-		addresses = append(addresses, NodeAddress{Type: string(a.Type), Address: a.Address})
-	}
+func transformNode(node corev1.Node) NodeInfo {
+	nodeInfo := node.Status.NodeInfo
+	capacity := node.Status.Capacity
 
 	return NodeInfo{
-		Name:             n.Name,
-		Status:           status,
-		Roles:            roles,
-		Version:          n.Status.NodeInfo.KubeletVersion,
-		OS:               n.Status.NodeInfo.OSImage,
-		Arch:             n.Status.NodeInfo.Architecture,
-		ContainerRuntime: n.Status.NodeInfo.ContainerRuntimeVersion,
-		CPU:              n.Status.Capacity.Cpu().String(),
-		Memory:           n.Status.Capacity.Memory().String(),
-		Pods:             n.Status.Capacity.Pods().String(),
-		Labels:           emptyIfNil(n.Labels),
-		Conditions:       conditions,
-		CreatedAt:        formatTime(n.CreationTimestamp),
-		Age:              getAge(n.CreationTimestamp),
-		Addresses:        addresses,
+		Name:             node.Name,
+		Status:           nodeStatus(node),
+		Roles:            nodeRoles(node),
+		Version:          nodeInfo.KubeletVersion,
+		OS:               nodeInfo.OSImage,
+		Arch:             nodeInfo.Architecture,
+		ContainerRuntime: nodeInfo.ContainerRuntimeVersion,
+		CPU:              capacity.Cpu().String(),
+		Memory:           capacity.Memory().String(),
+		Pods:             capacity.Pods().String(),
+		Labels:           emptyIfNil(node.Labels),
+		Conditions:       nodeConditions(node),
+		CreatedAt:        formatTime(node.CreationTimestamp),
+		Age:              getAge(node.CreationTimestamp),
+		Addresses:        nodeAddresses(node),
 	}
 }
 
-func transformEvent(e corev1.Event) KubeEvent {
+func nodeStatus(node corev1.Node) string {
+	for _, cond := range node.Status.Conditions {
+		isReady := cond.Type == corev1.NodeReady &&
+			cond.Status == corev1.ConditionTrue
+		if isReady {
+			return statusReady
+		}
+	}
+
+	return statusNotReady
+}
+
+func nodeRoles(node corev1.Node) []string {
+	const prefix = "node-role.kubernetes.io/"
+
+	roles := []string{}
+
+	for label := range node.Labels {
+		if role, ok := strings.CutPrefix(label, prefix); ok {
+			roles = append(roles, role)
+		}
+	}
+
+	if len(roles) == zeroCount {
+		roles = []string{valueNoneBrackets}
+	}
+
+	return roles
+}
+
+func nodeConditions(node corev1.Node) []NodeCondition {
+	conditions := make([]NodeCondition, zeroCount, len(node.Status.Conditions))
+	for _, cond := range node.Status.Conditions {
+		conditions = append(conditions, NodeCondition{
+			Type:    string(cond.Type),
+			Status:  string(cond.Status),
+			Reason:  cond.Reason,
+			Message: cond.Message,
+		})
+	}
+
+	return conditions
+}
+
+func nodeAddresses(node corev1.Node) []NodeAddress {
+	addresses := make([]NodeAddress, zeroCount, len(node.Status.Addresses))
+	for _, addr := range node.Status.Addresses {
+		addresses = append(addresses, NodeAddress{
+			Type:    string(addr.Type),
+			Address: addr.Address,
+		})
+	}
+
+	return addresses
+}
+
+func transformEvent(event corev1.Event) KubeEvent {
+	involved := event.InvolvedObject
+	object := fmt.Sprintf("%s/%s", involved.Kind, involved.Name)
+
 	return KubeEvent{
-		Type:      e.Type,
-		Reason:    e.Reason,
-		Message:   e.Message,
-		Object:    fmt.Sprintf("%s/%s", e.InvolvedObject.Kind, e.InvolvedObject.Name),
-		Namespace: e.Namespace,
-		FirstSeen: formatTime(e.FirstTimestamp),
-		LastSeen:  formatTime(e.LastTimestamp),
-		Count:     maxInt32(e.Count, 1),
-		Source:    e.Source.Component,
+		Type:      event.Type,
+		Reason:    event.Reason,
+		Message:   event.Message,
+		Object:    object,
+		Namespace: event.Namespace,
+		FirstSeen: formatTime(event.FirstTimestamp),
+		LastSeen:  formatTime(event.LastTimestamp),
+		Count:     maxInt32(event.Count, minEventCount),
+		Source:    event.Source.Component,
 	}
 }
 
@@ -442,6 +498,7 @@ func maxInt32(a, b int32) int32 {
 	if a > b {
 		return a
 	}
+
 	return b
 }
 
@@ -453,39 +510,60 @@ func podStatus(pod *corev1.Pod) string {
 	if pod.DeletionTimestamp != nil {
 		return "Terminating"
 	}
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason
-		}
-		if cs.State.Terminated != nil && cs.State.Terminated.Reason != "" {
-			return cs.State.Terminated.Reason
-		}
+
+	reason := containerStatusReason(pod.Status.ContainerStatuses)
+	if reason != emptyString {
+		return reason
 	}
-	if pod.Status.Phase != "" {
+
+	if pod.Status.Phase != emptyString {
 		return string(pod.Status.Phase)
 	}
-	return "Unknown"
+
+	return statusUnknown
 }
 
-func containerState(cs *corev1.ContainerStatus) string {
-	if cs == nil {
-		return "Waiting"
+// containerStatusReason returns the first waiting/terminated reason found among
+// the container statuses, or an empty string when none carry a reason.
+func containerStatusReason(statuses []corev1.ContainerStatus) string {
+	for _, status := range statuses {
+		if status.State.Waiting != nil &&
+			status.State.Waiting.Reason != emptyString {
+			return status.State.Waiting.Reason
+		}
+
+		if status.State.Terminated != nil &&
+			status.State.Terminated.Reason != emptyString {
+			return status.State.Terminated.Reason
+		}
 	}
+
+	return emptyString
+}
+
+func containerState(status *corev1.ContainerStatus) string {
+	if status == nil {
+		return statusWaiting
+	}
+
 	switch {
-	case cs.State.Running != nil:
+	case status.State.Running != nil:
 		return "Running"
-	case cs.State.Waiting != nil:
-		if cs.State.Waiting.Reason != "" {
-			return cs.State.Waiting.Reason
+	case status.State.Waiting != nil:
+		if status.State.Waiting.Reason != emptyString {
+			return status.State.Waiting.Reason
 		}
-		return "Waiting"
-	case cs.State.Terminated != nil:
-		if cs.State.Terminated.Reason != "" {
-			return cs.State.Terminated.Reason
+
+		return statusWaiting
+	case status.State.Terminated != nil:
+		if status.State.Terminated.Reason != emptyString {
+			return status.State.Terminated.Reason
 		}
+
 		return "Terminated"
 	}
-	return "Unknown"
+
+	return statusUnknown
 }
 
 // volumeType mirrors the JS trick of picking the first non-"name" key of a
@@ -495,24 +573,37 @@ func containerState(cs *corev1.ContainerStatus) string {
 // output aligned with the JS backend for acronym-prefixed types like NFS,
 // iSCSI, CSI, RBD, FC.
 func volumeType(vs corev1.VolumeSource) string {
-	v := reflect.ValueOf(vs)
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		f := v.Field(i)
-		if f.Kind() == reflect.Ptr && !f.IsNil() {
-			tag := t.Field(i).Tag.Get("json")
-			if comma := strings.Index(tag, ","); comma >= 0 {
-				tag = tag[:comma]
-			}
-			return tag
+	value := reflect.ValueOf(vs)
+	typ := value.Type()
+
+	for idx := range value.NumField() {
+		field := value.Field(idx)
+		if field.Kind() != reflect.Pointer || field.IsNil() {
+			continue
 		}
+
+		tag := typ.Field(idx).Tag.Get("json")
+		if comma := strings.Index(tag, ","); comma >= zeroCount {
+			tag = tag[:comma]
+		}
+
+		return tag
 	}
+
 	return "unknown"
 }
 
-func formatServicePort(p corev1.ServicePort) string {
-	if p.TargetPort.IntValue() != 0 || p.TargetPort.StrVal != "" {
-		return fmt.Sprintf("%d:%s/%s", p.Port, p.TargetPort.String(), p.Protocol)
+func formatServicePort(port corev1.ServicePort) string {
+	hasTarget := port.TargetPort.IntValue() != zeroCount ||
+		port.TargetPort.StrVal != emptyString
+	if hasTarget {
+		return fmt.Sprintf(
+			"%d:%s/%s",
+			port.Port,
+			port.TargetPort.String(),
+			port.Protocol,
+		)
 	}
-	return fmt.Sprintf("%d/%s", p.Port, p.Protocol)
+
+	return fmt.Sprintf("%d/%s", port.Port, port.Protocol)
 }
