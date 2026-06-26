@@ -14,7 +14,27 @@ concurrency:
 
 jobs:
   backend:
-    name: Backend (Go)
+    name: Backend tests (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: kubeview-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: kubeview-backend/go.mod
+          cache-dependency-path: kubeview-backend/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (race + coverage)
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+  backend-lint:
+    name: Backend lint (Go)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,9 +82,6 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
-
-      - name: Test (race + coverage)
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
 
   frontend:
     name: Frontend (Next.js / TypeScript)
