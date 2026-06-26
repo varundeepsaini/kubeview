@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -14,8 +15,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/util/homedir"
 )
+
+// emptyKubePath is the sentinel for an unset kubeconfig path or home directory.
+const emptyKubePath = ""
 
 // Client wraps a Kubernetes clientset plus contextual info from the kubeconfig.
 type Client struct {
@@ -25,64 +30,144 @@ type Client struct {
 	cluster   string
 }
 
+// Node response shapes. JSON tags must match what the frontend expects in
+// kubeview-frontend/src/lib/api.ts.
+
+type NodeCondition struct {
+	Type    string `json:"type"`
+	Status  string `json:"status"`
+	Reason  string `json:"reason,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+type NodeAddress struct {
+	Type    string `json:"type"`
+	Address string `json:"address"`
+}
+
+type NodeInfo struct {
+	Name             string            `json:"name"`
+	Status           string            `json:"status"`
+	Roles            []string          `json:"roles"`
+	Version          string            `json:"version"`
+	OS               string            `json:"os"`
+	Arch             string            `json:"arch"`
+	ContainerRuntime string            `json:"containerRuntime"`
+	CPU              string            `json:"cpu"`
+	Memory           string            `json:"memory"`
+	Pods             string            `json:"pods"`
+	Labels           map[string]string `json:"labels"`
+	Conditions       []NodeCondition   `json:"conditions"`
+	CreatedAt        string            `json:"createdAt"`
+	Age              string            `json:"age"`
+	Addresses        []NodeAddress     `json:"addresses"`
+}
+
 func NewClient() (*Client, error) {
-	config, contextName, clusterName, err := loadKubeConfig()
+	config, kubeCtx, err := loadKubeConfig()
 	if err != nil {
 		return nil, err
 	}
-	cs, err := kubernetes.NewForConfig(config)
+
+	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("create clientset: %w", err)
 	}
+
 	return &Client{
-		clientset: cs,
-		discovery: cs.Discovery(),
-		context:   contextName,
-		cluster:   clusterName,
+		clientset: clientset,
+		discovery: clientset.Discovery(),
+		context:   kubeCtx.contextName,
+		cluster:   kubeCtx.clusterName,
 	}, nil
 }
 
-func loadKubeConfig() (*rest.Config, string, string, error) {
+// kubeContext bundles the current context and cluster names so loadKubeConfig
+// returns a single distinct type instead of two same-typed string results.
+type kubeContext struct {
+	contextName string
+	clusterName string
+}
+
+func loadKubeConfig() (*rest.Config, kubeContext, error) {
+	var emptyCtx kubeContext
+
 	kubeconfigPath := os.Getenv("KUBECONFIG")
-	if kubeconfigPath == "" {
-		if home := homedir.HomeDir(); home != "" {
+	if kubeconfigPath == emptyKubePath {
+		if home := homedir.HomeDir(); home != emptyKubePath {
 			kubeconfigPath = filepath.Join(home, ".kube", "config")
 		}
 	}
 
-	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath}
-	overrides := &clientcmd.ConfigOverrides{}
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
+	loadingRules := new(clientcmd.ClientConfigLoadingRules)
+	loadingRules.ExplicitPath = kubeconfigPath
+	overrides := new(clientcmd.ConfigOverrides)
+	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		overrides,
+	)
 
 	rawConfig, err := kubeConfig.RawConfig()
 	if err != nil {
-		return nil, "", "", fmt.Errorf("load kubeconfig: %w", err)
+		err = fmt.Errorf("load kubeconfig: %w", err)
+
+		return nil, emptyCtx, err
 	}
 
 	restConfig, err := kubeConfig.ClientConfig()
 	if err != nil {
-		return nil, "", "", fmt.Errorf("build rest config: %w", err)
+		err = fmt.Errorf("build rest config: %w", err)
+
+		return nil, emptyCtx, err
 	}
 
-	currentContext := rawConfig.CurrentContext
-	clusterName := "unknown"
-	if ctx, ok := rawConfig.Contexts[currentContext]; ok && ctx.Cluster != "" {
-		clusterName = ctx.Cluster
+	ctxName := rawConfig.CurrentContext
+
+	return restConfig, kubeContext{
+		contextName: ctxName,
+		clusterName: clusterNameFor(rawConfig, ctxName),
+	}, nil
+}
+
+// clusterNameFor resolves the cluster bound to the current context, defaulting
+// to "unknown" when it cannot be determined.
+func clusterNameFor(raw clientcmdapi.Config, currentContext string) string {
+	ctx, ok := raw.Contexts[currentContext]
+	if ok && ctx.Cluster != emptyKubePath {
+		return ctx.Cluster
 	}
 
-	return restConfig, currentContext, clusterName, nil
+	return "unknown"
+}
+
+// listOptions returns a zero-value metav1.ListOptions. Built via a var
+// declaration (not a composite literal) so the full option set stays at its
+// documented defaults without enumerating every field.
+func listOptions() metav1.ListOptions {
+	var opts metav1.ListOptions
+
+	return opts
+}
+
+func getOptions() metav1.GetOptions {
+	var opts metav1.GetOptions
+
+	return opts
 }
 
 func (c *Client) GetClusterInfo(ctx context.Context) (ClusterInfo, error) {
 	var info ClusterInfo
+
 	ver, err := c.discovery.ServerVersion()
 	if err != nil {
 		return info, fmt.Errorf("server version: %w", err)
 	}
-	nodes, err := c.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+
+	nodes, err := c.clientset.CoreV1().Nodes().List(ctx, listOptions())
 	if err != nil {
 		return info, fmt.Errorf("list nodes: %w", err)
 	}
+
 	return ClusterInfo{
 		Version:     ver.GitVersion,
 		Platform:    ver.Platform,
@@ -92,72 +177,131 @@ func (c *Client) GetClusterInfo(ctx context.Context) (ClusterInfo, error) {
 	}, nil
 }
 
-func (c *Client) ListNamespaces(ctx context.Context) ([]corev1.Namespace, error) {
-	list, err := c.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+func (c *Client) ListNamespaces(
+	ctx context.Context,
+) ([]corev1.Namespace, error) {
+	list, err := c.clientset.CoreV1().Namespaces().List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list namespaces: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListPods(ctx context.Context, namespace string) ([]corev1.Pod, error) {
-	list, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+func (c *Client) ListPods(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.Pod, error) {
+	list, err := c.clientset.CoreV1().Pods(namespace).List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list pods: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) GetPod(ctx context.Context, namespace, name string) (*corev1.Pod, error) {
-	return c.clientset.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+func (c *Client) GetPod(
+	ctx context.Context,
+	namespace, name string,
+) (*corev1.Pod, error) {
+	pods := c.clientset.CoreV1().Pods(namespace)
+
+	pod, err := pods.Get(ctx, name, getOptions())
+	if err != nil {
+		return nil, fmt.Errorf("get pod: %w", err)
+	}
+
+	return pod, nil
 }
 
-func (c *Client) GetPodLogs(ctx context.Context, namespace, name, container string, tailLines int64) (string, error) {
-	opts := &corev1.PodLogOptions{TailLines: &tailLines}
+func (c *Client) GetPodLogs(
+	ctx context.Context,
+	namespace, name, container string,
+	tailLines int64,
+) (string, error) {
+	opts := podLogOptions(tailLines, container)
+	req := c.clientset.CoreV1().Pods(namespace).GetLogs(name, opts)
+
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return emptyKubePath, fmt.Errorf("open log stream: %w", err)
+	}
+
+	defer closeLogStream(stream)
+
+	raw, err := io.ReadAll(stream)
+	if err != nil {
+		return emptyKubePath, fmt.Errorf("read log stream: %w", err)
+	}
+
+	return string(raw), nil
+}
+
+func closeLogStream(stream io.Closer) {
+	closeErr := stream.Close()
+	if closeErr != nil {
+		log.Printf("close log stream: %v", closeErr)
+	}
+}
+
+// podLogOptions builds the log request options, setting only the fields we
+// care about and leaving the rest at their zero defaults.
+func podLogOptions(tailLines int64, container string) *corev1.PodLogOptions {
+	opts := new(corev1.PodLogOptions)
+	opts.TailLines = &tailLines
+
 	if container != "" {
 		opts.Container = container
 	}
-	req := c.clientset.CoreV1().Pods(namespace).GetLogs(name, opts)
-	stream, err := req.Stream(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer stream.Close()
-	b, err := io.ReadAll(stream)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+
+	return opts
 }
 
-func (c *Client) ListDeployments(ctx context.Context, namespace string) ([]appsv1.Deployment, error) {
-	list, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+func (c *Client) ListDeployments(
+	ctx context.Context,
+	namespace string,
+) ([]appsv1.Deployment, error) {
+	deployments := c.clientset.AppsV1().Deployments(namespace)
+
+	list, err := deployments.List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list deployments: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListServices(ctx context.Context, namespace string) ([]corev1.Service, error) {
-	list, err := c.clientset.CoreV1().Services(namespace).List(ctx, metav1.ListOptions{})
+func (c *Client) ListServices(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.Service, error) {
+	services := c.clientset.CoreV1().Services(namespace)
+
+	list, err := services.List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list services: %w", err)
 	}
+
 	return list.Items, nil
 }
 
 func (c *Client) ListNodes(ctx context.Context) ([]corev1.Node, error) {
-	list, err := c.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	list, err := c.clientset.CoreV1().Nodes().List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list nodes: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListEvents(ctx context.Context, namespace string) ([]corev1.Event, error) {
-	list, err := c.clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{})
+func (c *Client) ListEvents(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.Event, error) {
+	list, err := c.clientset.CoreV1().Events(namespace).List(ctx, listOptions())
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("list events: %w", err)
 	}
+
 	return list.Items, nil
 }
