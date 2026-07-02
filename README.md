@@ -59,8 +59,8 @@ Both services default to localhost ports but can be configured for non-local dep
 
 | Variable | Service | Default | Purpose |
 |----------|---------|---------|---------|
-| `PORT` | backend | `5501` | Port the API listens on. |
-| `CORS_ORIGIN` | backend | `http://localhost:5500` | Comma-separated list of allowed browser origins, e.g. `https://kubeview.example.com,http://localhost:5500`. |
+| `PORT` | backend | `5501` | Port the API listens on. Note: `next start` (frontend production mode) also reads `PORT`, so give each service its own value when they share an environment. |
+| `CORS_ORIGIN` | backend | `http://localhost:5500` | Comma-separated list of allowed browser origins, e.g. `https://kubeview.example.com,http://localhost:5500`. Origins must match the browser's `Origin` header exactly (scheme + host + port, no trailing slash); requests from unlisted origins get no CORS headers. |
 | `KUBECONFIG` | backend | `~/.kube/config` | Path to the kubeconfig used to reach the cluster. |
 | `NEXT_PUBLIC_API_BASE` | frontend | `http://localhost:5501/api` | Backend API base URL, inlined at build time (`npm run build`). |
 

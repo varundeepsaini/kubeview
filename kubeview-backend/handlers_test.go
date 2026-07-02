@@ -137,12 +137,15 @@ const (
 
 	htOriginExample = "https://kubeview.example.com"
 	htHdrACAO       = "Access-Control-Allow-Origin"
+	htHdrVary       = "Vary"
+	htHdrOrigin     = "Origin"
 	htOriginEvil    = "https://evil.example.com"
 
 	htMsgStatus     = "status = %d"
 	htMsgStatusBody = "status = %d, body = %s"
 	htMsgNewReq     = "new request: %v"
 	htMsgOrigins    = "origins = %v"
+	htMsgVary       = "Vary = %q, want %q"
 	htMsgDecode     = "decode: %v"
 
 	htPodNotFoundMsg = "Pod not found"
@@ -185,11 +188,23 @@ func newTestServer(
 func doRequest(t *testing.T, method, url string) httpResult {
 	t.Helper()
 
+	return doRequestOrigin(t, method, url, htEmpty)
+}
+
+// doRequestOrigin is doRequest with an Origin header attached when origin is
+// non-empty, for exercising the CORS allowlist.
+func doRequestOrigin(t *testing.T, method, url, origin string) httpResult {
+	t.Helper()
+
 	req, err := http.NewRequestWithContext(
 		context.Background(), method, url, nil,
 	)
 	if err != nil {
 		t.Fatalf(htMsgNewReq, err)
+	}
+
+	if origin != htEmpty {
+		req.Header.Set("Origin", origin)
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -843,11 +858,17 @@ func corsGETHeaders(srv *httptest.Server) func(*testing.T) {
 	return func(t *testing.T) {
 		t.Parallel()
 
-		res := httpGet(t, srv.URL+htPathHealth)
+		res := doRequestOrigin(
+			t, http.MethodGet, srv.URL+htPathHealth, htACAOValue,
+		)
 
 		got := res.header.Get(htHdrACAO)
 		if got != htACAOValue {
 			t.Fatalf("ACAO = %q", got)
+		}
+
+		if vary := res.header.Get(htHdrVary); vary != htHdrOrigin {
+			t.Fatalf(htMsgVary, vary, htHdrOrigin)
 		}
 	}
 }
@@ -921,8 +942,8 @@ func TestCORS_ConfiguredOrigins(t *testing.T) {
 	}{
 		{"second configured origin echoed", htACAOValue, htACAOValue},
 		{"first configured origin echoed", htOriginExample, htOriginExample},
-		{"unknown origin falls back to first", htOriginEvil, htOriginExample},
-		{"no origin header falls back to first", htEmpty, htOriginExample},
+		{"unknown origin gets no ACAO header", htOriginEvil, htEmpty},
+		{"no origin header gets no ACAO header", htEmpty, htEmpty},
 	}
 
 	for _, tc := range cases {
@@ -934,6 +955,61 @@ func TestCORS_ConfiguredOrigins(t *testing.T) {
 				t.Fatalf("ACAO = %q, want %q", got, tc.wantHeader)
 			}
 		})
+	}
+}
+
+func TestCORS_WildcardFailsClosed(t *testing.T) {
+	t.Parallel(
+	// CORS_ORIGIN=* must not become a real wildcard: "*" never equals a
+	// browser-serialized Origin, so no request origin matches and no ACAO
+	// header is emitted. The reference cors middleware fails closed on the
+	// same input.
+	)
+
+	srv := httptest.NewServer(
+		withCORS(newRouter(nil), parseCORSOrigins("*")),
+	)
+	t.Cleanup(srv.Close)
+
+	got := preflightACAO(t, srv.URL+htPathHealth, htOriginEvil)
+	if got != htEmpty {
+		t.Fatalf("ACAO = %q, want no header", got)
+	}
+}
+
+func TestCORS_GetEchoesConfiguredOrigin(t *testing.T) {
+	t.Parallel(
+	// The frontend's fetches are simple GETs that never preflight, so the
+	// allowlist must be applied on the GET path too, with Vary: Origin so
+	// shared caches never serve one origin's ACAO to another.
+	)
+
+	srv := httptest.NewServer(
+		withCORS(newRouter(nil), parseCORSOrigins(htOriginExample)),
+	)
+	t.Cleanup(srv.Close)
+
+	res := doRequestOrigin(
+		t, http.MethodGet, srv.URL+htPathHealth, htOriginExample,
+	)
+
+	if got := res.header.Get(htHdrACAO); got != htOriginExample {
+		t.Fatalf("ACAO = %q, want %q", got, htOriginExample)
+	}
+
+	if vary := res.header.Get(htHdrVary); vary != htHdrOrigin {
+		t.Fatalf(htMsgVary, vary, htHdrOrigin)
+	}
+}
+
+func TestCORS_PreflightHasVaryOrigin(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, nil)
+
+	res := doRequest(t, http.MethodOptions, srv.URL+htPathHealth)
+	if vary := res.header.Get(htHdrVary); vary != htHdrOrigin {
+		t.Fatalf(htMsgVary, vary, htHdrOrigin)
 	}
 }
 
@@ -1381,7 +1457,7 @@ func TestCORS_AllRoutes(t *testing.T) {
 func corsRouteCase(t *testing.T, srv *httptest.Server, path string) {
 	t.Helper()
 
-	res := httpGet(t, srv.URL+path)
+	res := doRequestOrigin(t, http.MethodGet, srv.URL+path, htACAOValue)
 
 	got := res.header.Get(htHdrACAO)
 	if got != htACAOValue {

@@ -97,20 +97,25 @@ func parseCORSOrigins(raw string) []string {
 	return origins
 }
 
-// withCORS allows the API to be called cross-origin. Narrow on purpose: only
-// origins from the allowed list (CORS_ORIGIN env, dev frontend by default),
-// never "*". A request Origin on the list is echoed back; anything else gets
-// the first allowed origin, which browsers then reject.
+// withCORS allows the API to be called cross-origin. Narrow on purpose: a
+// request Origin on the allowed list (CORS_ORIGIN env, dev frontend by
+// default) is echoed back; any other Origin — including none — gets no
+// Access-Control-Allow-Origin header at all, so browsers block it. Exact
+// matching means a configured "*" never equals a real Origin and therefore
+// fails closed instead of becoming a wildcard. Vary: Origin keeps shared
+// caches from serving one origin's ACAO to another.
 func withCORS(next http.Handler, allowed []string) http.Handler {
 	handler := func(writer http.ResponseWriter, req *http.Request) {
-		origin := allowed[zeroCount]
+		writer.Header().Add("Vary", "Origin")
 
 		requestOrigin := req.Header.Get("Origin")
-		if slices.Contains(allowed, requestOrigin) {
-			origin = requestOrigin
+		if requestOrigin != emptyString &&
+			slices.Contains(allowed, requestOrigin) {
+			writer.Header().Set(
+				"Access-Control-Allow-Origin", requestOrigin,
+			)
 		}
 
-		writer.Header().Set("Access-Control-Allow-Origin", origin)
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
