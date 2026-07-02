@@ -61,9 +61,12 @@ func run() error {
 		return fmt.Errorf("init kubernetes client: %w", err)
 	}
 
+	corsOrigins := parseCORSOrigins(os.Getenv("CORS_ORIGIN"))
+	log.Printf("CORS allowed origins: %v", corsOrigins)
+
 	server := new(http.Server)
 	server.Addr = ":" + port
-	server.Handler = withCORS(newRouter(client))
+	server.Handler = withCORS(newRouter(client), corsOrigins)
 	server.ReadTimeout = readTimeout
 	server.WriteTimeout = writeTimeout
 	server.IdleTimeout = idleTimeout
@@ -81,7 +84,7 @@ func serve(server *http.Server, stop <-chan os.Signal) error {
 	errCh := make(chan error, errChannelBuffer)
 
 	go func() {
-		log.Printf("KubeView API running on http://localhost%s", server.Addr)
+		log.Printf("KubeView API listening on %s", server.Addr)
 
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {

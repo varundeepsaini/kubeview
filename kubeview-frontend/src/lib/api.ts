@@ -1,4 +1,7 @@
-const API_BASE = "http://localhost:5501/api";
+// Build-time override for non-local deployments; falls back to the dev
+// backend. NEXT_PUBLIC_ vars are inlined by Next.js at build time.
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:5501/api";
 
 async function fetchApi<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });

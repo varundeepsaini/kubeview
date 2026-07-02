@@ -8,12 +8,15 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
+// frontendOrigin is the dev-server default, used when CORS_ORIGIN is unset.
 const frontendOrigin = "http://localhost:5500"
 
 // Query/path parameter names and HTTP-related numeric bounds.
@@ -74,11 +77,45 @@ type DeploymentCondition struct {
 	LastTransition string `json:"lastTransition,omitempty"`
 }
 
-// withCORS allows the API to be called cross-origin. Narrow on purpose: only
-// the whitelisted dev frontend, never "*".
-func withCORS(next http.Handler) http.Handler {
+// parseCORSOrigins splits the CORS_ORIGIN environment value (a
+// comma-separated origin list) into individual origins, falling back to the
+// dev frontend when the value is empty.
+func parseCORSOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	origins := make([]string, zeroCount, len(parts))
+
+	for _, part := range parts {
+		if origin := strings.TrimSpace(part); origin != emptyString {
+			origins = append(origins, origin)
+		}
+	}
+
+	if len(origins) == zeroCount {
+		return []string{frontendOrigin}
+	}
+
+	return origins
+}
+
+// withCORS allows the API to be called cross-origin. Narrow on purpose: a
+// request Origin on the allowed list (CORS_ORIGIN env, dev frontend by
+// default) is echoed back; any other Origin — including none — gets no
+// Access-Control-Allow-Origin header at all, so browsers block it. Exact
+// matching means a configured "*" never equals a real Origin and therefore
+// fails closed instead of becoming a wildcard. Vary: Origin keeps shared
+// caches from serving one origin's ACAO to another.
+func withCORS(next http.Handler, allowed []string) http.Handler {
 	handler := func(writer http.ResponseWriter, req *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", frontendOrigin)
+		writer.Header().Add("Vary", "Origin")
+
+		requestOrigin := req.Header.Get("Origin")
+		if requestOrigin != emptyString &&
+			slices.Contains(allowed, requestOrigin) {
+			writer.Header().Set(
+				"Access-Control-Allow-Origin", requestOrigin,
+			)
+		}
+
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
