@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeview-frontend
+  namespace: kubeview
+  labels:
+    app: kubeview-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeview-frontend
+  template:
+    metadata:
+      labels:
+        app: kubeview-frontend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        # Numeric UID of the alpine "node" user — kubelet cannot verify
+        # runAsNonRoot against a non-numeric image USER.
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: frontend
+          # NEXT_PUBLIC_API_BASE is baked in at image build time and must
+          # point at the backend URL reachable from the BROWSER (not the
+          # cluster-internal service name) — e.g. the port-forwarded or
+          # ingress URL of kubeview-backend.
+          image: kubeview-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeview-frontend
+  namespace: kubeview
+  labels:
+    app: kubeview-frontend
+spec:
+  selector:
+    app: kubeview-frontend
+  ports:
+    - name: http
+      port: 5500
+      targetPort: http

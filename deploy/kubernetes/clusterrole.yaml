@@ -1,0 +1,28 @@
+# Read-only access to exactly the resources KubeView surfaces (plus the
+# types tracked for issue #8). No write verbs, no cluster-admin.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubeview-readonly
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - nodes
+      - namespaces
+      - events
+      - configmaps
+      - secrets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]

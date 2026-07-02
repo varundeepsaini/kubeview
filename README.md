@@ -74,6 +74,35 @@ PORT=8080 CORS_ORIGIN=https://kubeview.example.com go run .
 NEXT_PUBLIC_API_BASE=https://api.kubeview.example.com/api npm run build
 ```
 
+## Deploying
+
+### Docker Compose (local)
+
+```bash
+docker compose up --build
+```
+
+Builds both images and starts the stack against your local cluster: the backend runs on the host network (so it can reach kind/minikube API servers bound to `127.0.0.1`) with `~/.kube/config` mounted read-only, and the dashboard is served at http://localhost:5500.
+
+### In-cluster (Kubernetes manifests)
+
+```bash
+# Build images and make them available to the cluster, e.g. with kind:
+docker build -t kubeview-backend:latest kubeview-backend/
+docker build -t kubeview-frontend:latest kubeview-frontend/
+kind load docker-image kubeview-backend:latest kubeview-frontend:latest
+
+kubectl apply -k deploy/kubernetes/
+kubectl -n kubeview port-forward svc/kubeview-frontend 5500:5500 &
+kubectl -n kubeview port-forward svc/kubeview-backend 5501:5501
+```
+
+The manifests create a `kubeview` namespace, a `ServiceAccount`, and a `ClusterRole`/`ClusterRoleBinding` granting **read-only** (`get`, `list`, `watch`) access to the resources KubeView surfaces — no write verbs.
+
+**In-cluster auth:** when no kubeconfig is present (`KUBECONFIG` unset and no `~/.kube/config`), the backend automatically uses the pod's mounted service-account token. An explicitly set `KUBECONFIG` that doesn't exist is a hard error, matching `kubectl`.
+
+**Frontend API URL:** `NEXT_PUBLIC_API_BASE` is baked into the frontend image at build time and must be the backend URL reachable from the *browser* (for the port-forward flow above, the default `http://localhost:5501/api` works). Rebuild the frontend image with a different build arg to point elsewhere, and set the backend's `CORS_ORIGIN` to the origin the dashboard is served from.
+
 ## API reference
 
 The backend exposes the following endpoints. All responses are JSON.

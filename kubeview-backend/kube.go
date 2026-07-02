@@ -90,14 +90,57 @@ type kubeContext struct {
 	clusterName string
 }
 
+// inClusterName labels both the context and cluster when running off the
+// pod's service account, where kubeconfig context names don't exist.
+const inClusterName = "in-cluster"
+
+func fileExists(path string) bool {
+	if path == emptyKubePath {
+		return false
+	}
+
+	// The path comes from the operator's own KUBECONFIG/HOME environment,
+	// not from request input, so it is trusted by definition.
+	_, err := os.Stat(path) //nolint:gosec // operator-controlled path
+
+	return err == nil
+}
+
+// loadInClusterConfig builds client configuration from the pod's mounted
+// service-account token, for deployments running inside the cluster.
+func loadInClusterConfig() (*rest.Config, kubeContext, error) {
+	var emptyCtx kubeContext
+
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, emptyCtx, fmt.Errorf(
+			"no kubeconfig found and in-cluster config unavailable: %w", err,
+		)
+	}
+
+	return config, kubeContext{
+		contextName: inClusterName,
+		clusterName: inClusterName,
+	}, nil
+}
+
 func loadKubeConfig() (*rest.Config, kubeContext, error) {
 	var emptyCtx kubeContext
 
-	kubeconfigPath := os.Getenv("KUBECONFIG")
+	explicit := os.Getenv("KUBECONFIG")
+
+	kubeconfigPath := explicit
 	if kubeconfigPath == emptyKubePath {
 		if home := homedir.HomeDir(); home != emptyKubePath {
 			kubeconfigPath = filepath.Join(home, ".kube", "config")
 		}
+	}
+
+	// An explicitly configured KUBECONFIG must exist (matching kubectl); the
+	// implicit ~/.kube/config default may be absent, in which case we assume
+	// the process runs as a pod and use the in-cluster service account.
+	if explicit == emptyKubePath && !fileExists(kubeconfigPath) {
+		return loadInClusterConfig()
 	}
 
 	loadingRules := new(clientcmd.ClientConfigLoadingRules)
