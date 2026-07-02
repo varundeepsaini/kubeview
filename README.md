@@ -61,7 +61,7 @@ Both services default to localhost ports but can be configured for non-local dep
 |----------|---------|---------|---------|
 | `PORT` | backend | `5501` | Port the API listens on. Note: `next start` (frontend production mode) also reads `PORT`, so give each service its own value when they share an environment. |
 | `CORS_ORIGIN` | backend | `http://localhost:5500` | Comma-separated list of allowed browser origins, e.g. `https://kubeview.example.com,http://localhost:5500`. Origins must match the browser's `Origin` header exactly (scheme + host + port, no trailing slash); requests from unlisted origins get no CORS headers. |
-| `KUBECONFIG` | backend | `~/.kube/config` | Path to the kubeconfig used to reach the cluster. |
+| `KUBECONFIG` | backend | `~/.kube/config` | Kubeconfig path(s) used to reach the cluster; a colon-separated list is merged like `kubectl`. When unset and `~/.kube/config` is absent, the backend uses the in-cluster service account. |
 | `NEXT_PUBLIC_API_BASE` | frontend | `http://localhost:5501/api` | Backend API base URL, inlined at build time (`npm run build`). |
 
 Example:
@@ -84,6 +84,11 @@ docker compose up --build
 
 Builds both images and starts the stack against your local cluster: the backend runs on the host network (so it can reach kind/minikube API servers bound to `127.0.0.1`) with `~/.kube/config` mounted read-only, and the dashboard is served at http://localhost:5500.
 
+Notes:
+- **Linux, or Docker Desktop with host networking enabled** (Settings → Resources → Network) — host networking is required to reach a local cluster's `127.0.0.1` API server.
+- The container runs as UID 1000 by default. If your host UID differs, run `UID=$(id -u) GID=$(id -g) docker compose up --build` so the mounted kubeconfig stays readable.
+- Point at a specific kubeconfig with `KUBECONFIG_HOST=/path/to/config` (a single file, not a colon-separated list).
+
 ### In-cluster (Kubernetes manifests)
 
 ```bash
@@ -97,9 +102,13 @@ kubectl -n kubeview port-forward svc/kubeview-frontend 5500:5500 &
 kubectl -n kubeview port-forward svc/kubeview-backend 5501:5501
 ```
 
-The manifests create a `kubeview` namespace, a `ServiceAccount`, and a `ClusterRole`/`ClusterRoleBinding` granting **read-only** (`get`, `list`, `watch`) access to the resources KubeView surfaces — no write verbs.
+The manifests create a `kubeview` namespace, a `ServiceAccount`, and a `ClusterRole`/`ClusterRoleBinding` granting **read-only** (`get`, `list`, `watch`) access to the resources KubeView surfaces — no write verbs. A `NetworkPolicy` restricts backend ingress to the frontend pod.
 
-**In-cluster auth:** when no kubeconfig is present (`KUBECONFIG` unset and no `~/.kube/config`), the backend automatically uses the pod's mounted service-account token. An explicitly set `KUBECONFIG` that doesn't exist is a hard error, matching `kubectl`.
+> **Security:** the backend API is **unauthenticated** — it serves read-only cluster data (including pod logs, which can contain secrets) under a single service-account identity. The bundled `NetworkPolicy` limits in-cluster access to the frontend, but do not expose the backend Service directly via Ingress/LoadBalancer without putting authentication in front of it.
+
+**Images:** the manifests reference `:latest` with `imagePullPolicy: IfNotPresent` for the `kind load` flow above. To deploy from a registry, push tagged images and update the `image:` fields in `backend.yaml`/`frontend.yaml` (prefer an immutable tag over `:latest`, since `IfNotPresent` will not re-pull a moved `:latest`).
+
+**In-cluster auth:** when no kubeconfig is present (`KUBECONFIG` unset and no `~/.kube/config`), the backend automatically uses the pod's mounted service-account token.
 
 **Frontend API URL:** `NEXT_PUBLIC_API_BASE` is baked into the frontend image at build time and must be the backend URL reachable from the *browser* (for the port-forward flow above, the default `http://localhost:5501/api` works). Rebuild the frontend image with a different build arg to point elsewhere, and set the backend's `CORS_ORIGIN` to the origin the dashboard is served from.
 

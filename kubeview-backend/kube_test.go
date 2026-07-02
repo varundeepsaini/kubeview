@@ -62,6 +62,7 @@ const (
 	ktSampleTailLines    = 42
 	ktFileModeFile       = 0o600
 	ktDirModePrivate     = 0o700
+	ktDirModeNone        = 0o000
 	ktDefaultTailLines   = 100
 )
 
@@ -1042,6 +1043,102 @@ func TestLoadKubeConfig_NoKubeconfigFallsBackToInCluster(t *testing.T) {
 	err := loadKubeConfigErr()
 	if !errors.Is(err, rest.ErrNotInCluster) {
 		t.Fatalf("err = %v, want rest.ErrNotInCluster", err)
+	}
+}
+
+const ktKubeconfigYAML = `apiVersion: v1
+kind: Config
+current-context: my-ctx
+clusters:
+- cluster:
+    server: https://127.0.0.1:6443
+    insecure-skip-tls-verify: true
+  name: my-cluster
+contexts:
+- context:
+    cluster: my-cluster
+    user: me
+  name: my-ctx
+users:
+- name: me
+  user:
+    token: fake
+`
+
+func TestLoadKubeConfig_ColonListUsesFirstReadableFile(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	// A colon-separated KUBECONFIG (the kubectl-standard multi-path form)
+	// must merge rather than being treated as one bogus path.
+	dir := t.TempDir()
+	existing := filepath.Join(dir, ktConfigFileName)
+	mustWrite(t, existing, ktKubeconfigYAML)
+
+	missing := filepath.Join(dir, "second")
+	t.Setenv(ktEnvKubeconfig, existing+string(os.PathListSeparator)+missing)
+
+	cfg, kc, err := loadKubeConfig()
+	requireNoErr(t, err)
+
+	if cfg == nil {
+		t.Fatal("nil rest config")
+	}
+
+	if kc.contextName != "my-ctx" {
+		t.Fatalf("ctx = %q", kc.contextName)
+	}
+}
+
+func TestFileMissing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	present := filepath.Join(dir, ktConfigFileName)
+	mustWrite(t, present, ktKubeconfigYAML)
+
+	if fileMissing(present) {
+		t.Fatal("existing file reported missing")
+	}
+
+	if !fileMissing(filepath.Join(dir, "nope")) {
+		t.Fatal("absent file reported present")
+	}
+}
+
+func TestFileMissing_PermissionErrorNotReportedMissing(t *testing.T) {
+	t.Parallel(
+	// A stat error that is not not-exist (e.g. a path under a search-denied
+	// directory) must NOT be reported as missing, so the real error is
+	// surfaced instead of being masked as an in-cluster fallback.
+	)
+
+	if os.Getuid() == ktZero {
+		t.Skip("running as root bypasses directory permissions")
+	}
+
+	locked := filepath.Join(t.TempDir(), "locked")
+
+	err := os.Mkdir(locked, ktDirModePrivate)
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	inside := filepath.Join(locked, ktConfigFileName)
+	mustWrite(t, inside, ktKubeconfigYAML)
+
+	err = os.Chmod(locked, ktDirModeNone)
+	if err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	t.Cleanup(func() {
+		cerr := os.Chmod(locked, ktDirModePrivate)
+		if cerr != nil {
+			t.Errorf("restore perms: %v", cerr)
+		}
+	})
+
+	if fileMissing(inside) {
+		t.Fatal("permission-denied path reported as missing")
 	}
 }
 
