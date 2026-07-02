@@ -38,6 +38,11 @@ const (
 	// zeroCount is used both as a clamp floor for negative durations and to
 	// detect empty collections.
 	zeroCount = 0
+
+	// annotationDefaultContainer is the kubectl convention naming the
+	// container tools should target by default (set by mesh injectors so
+	// clients skip the proxy sidecar).
+	annotationDefaultContainer = "kubectl.kubernetes.io/default-container"
 )
 
 // podSummary aggregates per-container counters for a pod.
@@ -64,19 +69,22 @@ type Namespace struct {
 }
 
 type Pod struct {
-	Name       string            `json:"name"`
-	Namespace  string            `json:"namespace"`
-	Status     string            `json:"status"`
-	Ready      string            `json:"ready"`
-	Node       string            `json:"node"`
-	IP         string            `json:"ip"`
-	Labels     map[string]string `json:"labels"`
-	CreatedAt  string            `json:"createdAt"`
-	Age        string            `json:"age"`
-	Containers []Container       `json:"containers"`
-	Conditions []PodCondition    `json:"conditions"`
-	Volumes    []Volume          `json:"volumes"`
-	Restarts   int32             `json:"restarts"`
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Status    string            `json:"status"`
+	Ready     string            `json:"ready"`
+	Node      string            `json:"node"`
+	IP        string            `json:"ip"`
+	Labels    map[string]string `json:"labels"`
+	CreatedAt string            `json:"createdAt"`
+	Age       string            `json:"age"`
+	// DefaultContainer carries the kubectl.kubernetes.io/default-container
+	// annotation so clients pick the container kubectl would.
+	DefaultContainer string         `json:"defaultContainer"`
+	Containers       []Container    `json:"containers"`
+	Conditions       []PodCondition `json:"conditions"`
+	Volumes          []Volume       `json:"volumes"`
+	Restarts         int32          `json:"restarts"`
 }
 
 type Deployment struct {
@@ -199,6 +207,8 @@ func transformPod(pod *corev1.Pod) Pod {
 		Containers: podContainers(pod),
 		Conditions: podConditions(pod),
 		Volumes:    podVolumes(pod),
+
+		DefaultContainer: pod.Annotations[annotationDefaultContainer],
 	}
 }
 

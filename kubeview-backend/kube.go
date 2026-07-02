@@ -220,16 +220,16 @@ func (c *Client) GetPodLogs(
 	tailLines int64,
 ) (string, error) {
 	// Multi-container pods reject log requests without an explicit container
-	// (the API server answers 400), so fall back to the first spec container.
+	// (the API server answers 400), so fall back to the container kubectl
+	// would pick: the default-container annotation when it names a real
+	// container, else the first spec container.
 	if container == emptyKubePath {
 		pod, err := c.GetPod(ctx, namespace, name)
 		if err != nil {
 			return emptyKubePath, err
 		}
 
-		if len(pod.Spec.Containers) > zeroCount {
-			container = pod.Spec.Containers[zeroCount].Name
-		}
+		container = defaultLogContainer(pod)
 	}
 
 	opts := podLogOptions(tailLines, container)
@@ -248,6 +248,25 @@ func (c *Client) GetPodLogs(
 	}
 
 	return string(raw), nil
+}
+
+// defaultLogContainer picks the container a log request should target when
+// the caller did not name one: the kubectl.kubernetes.io/default-container
+// annotation when it names a spec container, else the first spec container.
+func defaultLogContainer(pod *corev1.Pod) string {
+	if annotated, ok := pod.Annotations[annotationDefaultContainer]; ok {
+		for _, spec := range pod.Spec.Containers {
+			if spec.Name == annotated {
+				return annotated
+			}
+		}
+	}
+
+	if len(pod.Spec.Containers) > zeroCount {
+		return pod.Spec.Containers[zeroCount].Name
+	}
+
+	return emptyKubePath
 }
 
 func closeLogStream(stream io.Closer) {

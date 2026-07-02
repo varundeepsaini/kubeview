@@ -746,6 +746,25 @@ func TestTransformPod_PartialStatusReadyCount(
 	}
 }
 
+func TestTransformPod_DefaultContainerAnnotationExposed(t *testing.T) {
+	t.Parallel()
+
+	pod := ttBuild352()
+	pod.Annotations = map[string]string{
+		"kubectl.kubernetes.io/default-container": ttSB,
+	}
+
+	got := transformPod(pod)
+	wantEq(t, "defaultContainer", got.DefaultContainer, ttSB)
+}
+
+func TestTransformPod_NoDefaultContainerAnnotation(t *testing.T) {
+	t.Parallel()
+
+	got := transformPod(ttBuild352())
+	wantEq(t, "defaultContainer", got.DefaultContainer, ttEmptyStr)
+}
+
 func TestTransformPod_ContainerStatusesMatchedByNameNotIndex(t *testing.T) {
 	t.Parallel(
 	// The API server does not guarantee status.containerStatuses is ordered

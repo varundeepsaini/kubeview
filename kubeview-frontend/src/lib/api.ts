@@ -55,6 +55,7 @@ export interface Pod {
   containers: Container[];
   conditions: PodCondition[];
   volumes: { name: string; type: string }[];
+  defaultContainer: string;
 }
 
 export interface DeploymentCondition {

@@ -34,9 +34,13 @@ const (
 	ktVersionGit       = "v1.30.0"
 	ktSubresourceLog   = "log"
 	ktVerbGet          = "get"
-	ktEnvKubeconfig    = "KUBECONFIG"
-	ktConfigFileName   = "config"
-	ktEmpty            = ""
+
+	ktAnnotationDefaultContainer = "kubectl.kubernetes.io/default-container"
+	ktBodyOK                     = "ok"
+	ktMsgContainerOpt            = "expected Container option %q, got %q"
+	ktEnvKubeconfig              = "KUBECONFIG"
+	ktConfigFileName             = "config"
+	ktEmpty                      = ""
 
 	ktResourcePods        = "pods"
 	ktResourceDeployments = "deployments"
@@ -445,6 +449,14 @@ func TestClient_GetPodLogs(t *testing.T) {
 		testGetPodLogsExplicitSkipsPodLookup,
 	)
 	t.Run(
+		"default-container annotation wins over first spec container",
+		testGetPodLogsDefaultContainerAnnotation,
+	)
+	t.Run(
+		"annotation naming unknown container -> first spec container",
+		testGetPodLogsBogusAnnotationFallsBack,
+	)
+	t.Run(
 		"empty container + missing pod -> NotFound from pod lookup",
 		testGetPodLogsMissingPodPropagatesNotFound,
 	)
@@ -617,7 +629,7 @@ func testGetPodLogsEmptyContainer(t *testing.T) {
 	clientset.PrependReactor(
 		ktVerbGet,
 		ktResourcePods,
-		logReactor(t, "ok", func(opts *corev1.PodLogOptions) {
+		logReactor(t, ktBodyOK, func(opts *corev1.PodLogOptions) {
 			captured = opts.Container
 		}),
 	)
@@ -633,7 +645,100 @@ func testGetPodLogsEmptyContainer(t *testing.T) {
 
 	if captured != ktContainerMain {
 		t.Fatalf(
-			"expected Container option %q, got %q",
+			ktMsgContainerOpt,
+			ktContainerMain,
+			captured,
+		)
+	}
+}
+
+func testGetPodLogsDefaultContainerAnnotation(t *testing.T) {
+	t.Parallel(
+	// kubectl honors kubectl.kubernetes.io/default-container (mesh injectors
+	// set it so tools skip the proxy sidecar); the fallback must prefer it
+	// over the first spec container.
+	)
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+	sidecarContainer := ktZeroContainer
+	sidecarContainer.Name = ktContainerSidecar
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer, sidecarContainer}
+	pod.Annotations = map[string]string{
+		ktAnnotationDefaultContainer: ktContainerSidecar,
+	}
+
+	client, clientset := newTestClient(t, nil, pod)
+
+	var captured string
+
+	clientset.PrependReactor(
+		ktVerbGet,
+		ktResourcePods,
+		logReactor(t, ktBodyOK, func(opts *corev1.PodLogOptions) {
+			captured = opts.Container
+		}),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	if captured != ktContainerSidecar {
+		t.Fatalf(
+			ktMsgContainerOpt,
+			ktContainerSidecar,
+			captured,
+		)
+	}
+}
+
+func testGetPodLogsBogusAnnotationFallsBack(t *testing.T) {
+	t.Parallel(
+	// An annotation naming a container that does not exist in the spec must
+	// be ignored in favor of the first spec container.
+	)
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer}
+	pod.Annotations = map[string]string{
+		ktAnnotationDefaultContainer: "no-such-container",
+	}
+
+	client, clientset := newTestClient(t, nil, pod)
+
+	var captured string
+
+	clientset.PrependReactor(
+		ktVerbGet,
+		ktResourcePods,
+		logReactor(t, ktBodyOK, func(opts *corev1.PodLogOptions) {
+			captured = opts.Container
+		}),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	if captured != ktContainerMain {
+		t.Fatalf(
+			ktMsgContainerOpt,
 			ktContainerMain,
 			captured,
 		)

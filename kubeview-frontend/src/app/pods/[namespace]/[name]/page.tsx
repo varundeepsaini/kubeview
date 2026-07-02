@@ -34,8 +34,12 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
   if (!pod) return <ErrorMessage message="Pod not found" />;
 
   // Multi-container pods reject log requests without an explicit container,
-  // so always target a concrete container, defaulting to the first one.
-  const activeContainer = selectedContainer || pod.containers[0]?.name || "";
+  // so always target a concrete container: the pod's default-container
+  // annotation when valid, else the first container.
+  const annotatedDefault = pod.containers.some((c) => c.name === pod.defaultContainer)
+    ? pod.defaultContainer
+    : "";
+  const activeContainer = selectedContainer || annotatedDefault || pod.containers[0]?.name || "";
 
   return (
     <div>
