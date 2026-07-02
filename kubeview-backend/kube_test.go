@@ -439,6 +439,64 @@ func TestClient_GetPodLogs(t *testing.T) {
 		"empty container -> defaults to first spec container",
 		testGetPodLogsEmptyContainer,
 	)
+	t.Run(
+		"explicit container -> no pod lookup",
+		testGetPodLogsExplicitSkipsPodLookup,
+	)
+	t.Run(
+		"empty container + missing pod -> NotFound from pod lookup",
+		testGetPodLogsMissingPodPropagatesNotFound,
+	)
+}
+
+func testGetPodLogsExplicitSkipsPodLookup(t *testing.T) {
+	t.Parallel(
+	// The first-spec-container fallback must not cost an extra pod GET when
+	// the caller already names a container.
+	)
+
+	client, clientset := newTestClient(
+		t, nil,
+		ktNewPod(ktPodWeb, ktNamespaceDefault),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktContainerSidecar,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	for _, action := range clientset.Actions() {
+		if action.GetVerb() == "get" &&
+			action.GetResource().Resource == ktResourcePods &&
+			action.GetSubresource() == ktEmpty {
+			t.Fatal("explicit container must not trigger a pod lookup")
+		}
+	}
+}
+
+func testGetPodLogsMissingPodPropagatesNotFound(t *testing.T) {
+	t.Parallel()
+
+	client, _ := newTestClient(t, nil)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	if err == nil {
+		t.Fatal("expected error for missing pod")
+	}
+
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound, got %v", err)
+	}
 }
 
 func testGetPodLogsDefault(t *testing.T) {
