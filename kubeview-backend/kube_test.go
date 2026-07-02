@@ -27,6 +27,7 @@ const (
 	ktPodWeb           = "web"
 	ktPodA             = "a"
 	ktContainerSidecar = "sidecar"
+	ktContainerMain    = "main"
 	ktNameAPI          = "api"
 	ktReasonScheduled  = "Scheduled"
 	ktPlatformAMD64    = "linux/amd64"
@@ -90,6 +91,7 @@ var (
 	ktZeroTime          metav1.Time
 	ktZeroMicroTime     metav1.MicroTime
 	ktZeroPodSpec       corev1.PodSpec
+	ktZeroContainer     corev1.Container
 	ktZeroPodStatus     corev1.PodStatus
 	ktZeroNamespaceSpec corev1.NamespaceSpec
 	ktZeroNamespaceStat corev1.NamespaceStatus
@@ -434,7 +436,7 @@ func TestClient_GetPodLogs(t *testing.T) {
 	t.Run("returns fake logs body (default reactor)", testGetPodLogsDefault)
 	t.Run("passes container option through", testGetPodLogsContainer)
 	t.Run(
-		"empty container -> empty Container option (server picks default)",
+		"empty container -> defaults to first spec container",
 		testGetPodLogsEmptyContainer,
 	)
 }
@@ -535,12 +537,21 @@ func testGetPodLogsContainer(t *testing.T) {
 }
 
 func testGetPodLogsEmptyContainer(t *testing.T) {
-	t.Parallel()
-
-	client, clientset := newTestClient(
-		t, nil,
-		ktNewPod(ktPodWeb, ktNamespaceDefault),
+	t.Parallel(
+	// Multi-container pods reject log requests without an explicit container
+	// (the API server answers 400), so an empty container must fall back to
+	// the first container in the pod spec.
 	)
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+	sidecarContainer := ktZeroContainer
+	sidecarContainer.Name = ktContainerSidecar
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer, sidecarContainer}
+
+	client, clientset := newTestClient(t, nil, pod)
 
 	var captured string
 
@@ -561,8 +572,12 @@ func testGetPodLogsEmptyContainer(t *testing.T) {
 	)
 	requireNoErr(t, err)
 
-	if captured != ktEmpty {
-		t.Fatalf("expected empty Container option, got %q", captured)
+	if captured != ktContainerMain {
+		t.Fatalf(
+			"expected Container option %q, got %q",
+			ktContainerMain,
+			captured,
+		)
 	}
 }
 
