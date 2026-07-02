@@ -7,3 +7,4 @@ resources:
   - clusterrolebinding.yaml
   - backend.yaml
   - frontend.yaml
+  - networkpolicy.yaml

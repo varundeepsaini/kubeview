@@ -1,0 +1,26 @@
+# The backend API is unauthenticated (it serves read-only cluster data under
+# a single service-account identity), so restrict who can reach it. This
+# policy allows ingress to the backend only from the frontend pod; the
+# port-forward flow in the README still works because kubectl port-forward
+# tunnels through the API server, not the pod network.
+#
+# Remove or widen this if you expose the backend to other in-cluster clients.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kubeview-backend-ingress
+  namespace: kubeview
+spec:
+  podSelector:
+    matchLabels:
+      app: kubeview-backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: kubeview-frontend
+      ports:
+        - protocol: TCP
+          port: 5501

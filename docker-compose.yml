@@ -1,18 +1,32 @@
-# Local development stack. The backend runs on the host network so it can
-# reach API servers that bind to 127.0.0.1 (kind, minikube, k3d); the
-# kubeconfig is mounted read-only.
+# Local development stack.
+#
+# network_mode: host lets the backend reach API servers that bind to
+# 127.0.0.1 (kind, minikube, k3d). This is Linux-only; on Docker Desktop
+# (macOS/Windows) enable host networking in Settings > Resources > Network,
+# or run the backend directly on the host with `go run .`.
+#
+# KUBECONFIG_HOST points at a single kubeconfig FILE on the host (a
+# colon-separated KUBECONFIG list is not supported here — pick one file).
 services:
   backend:
     build: ./kubeview-backend
-    network_mode: host # kind/minikube API servers listen on 127.0.0.1
-    # Run as your host user so the mounted kubeconfig (usually mode 600)
-    # stays readable. Override UID/GID if yours differ.
+    network_mode: host
+    # Compose cannot read the unexported shell $UID/$GID, so these default to
+    # 1000 (the first-user default on most Linux desktops). If your uid/gid
+    # differ, run: `UID=$(id -u) GID=$(id -g) docker compose up`.
     user: "${UID:-1000}:${GID:-1000}"
     environment:
       KUBECONFIG: /kubeconfig
       CORS_ORIGIN: http://localhost:5500
     volumes:
-      - ${KUBECONFIG:-~/.kube/config}:/kubeconfig:ro
+      - type: bind
+        source: ${KUBECONFIG_HOST:-~/.kube/config}
+        target: /kubeconfig
+        read_only: true
+        # Fail loudly if the kubeconfig is missing instead of creating a
+        # root-owned directory at its path.
+        bind:
+          create_host_path: false
 
   frontend:
     build:

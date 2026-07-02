@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -94,16 +96,18 @@ type kubeContext struct {
 // pod's service account, where kubeconfig context names don't exist.
 const inClusterName = "in-cluster"
 
-func fileExists(path string) bool {
+// fileMissing reports whether the path definitely does not exist. A stat
+// error that is not "not exist" (e.g. a permission problem on a parent
+// directory) returns false so the caller surfaces the real error instead of
+// masking it as an in-cluster fallback.
+func fileMissing(path string) bool {
 	if path == emptyKubePath {
-		return false
+		return true
 	}
 
-	// The path comes from the operator's own KUBECONFIG/HOME environment,
-	// not from request input, so it is trusted by definition.
-	_, err := os.Stat(path) //nolint:gosec // operator-controlled path
+	_, err := os.Stat(path)
 
-	return err == nil
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // loadInClusterConfig builds client configuration from the pod's mounted
@@ -129,22 +133,31 @@ func loadKubeConfig() (*rest.Config, kubeContext, error) {
 
 	explicit := os.Getenv("KUBECONFIG")
 
-	kubeconfigPath := explicit
-	if kubeconfigPath == emptyKubePath {
-		if home := homedir.HomeDir(); home != emptyKubePath {
-			kubeconfigPath = filepath.Join(home, ".kube", "config")
-		}
-	}
+	// An explicitly configured KUBECONFIG is honored as-is (a colon-separated
+	// list is split and merged, matching kubectl). Without it, the implicit
+	// ~/.kube/config default is used only if present; otherwise we assume the
+	// process runs as a pod and use the in-cluster service account.
+	var paths []string
 
-	// An explicitly configured KUBECONFIG must exist (matching kubectl); the
-	// implicit ~/.kube/config default may be absent, in which case we assume
-	// the process runs as a pod and use the in-cluster service account.
-	if explicit == emptyKubePath && !fileExists(kubeconfigPath) {
-		return loadInClusterConfig()
+	switch {
+	case explicit != emptyKubePath:
+		paths = filepath.SplitList(explicit)
+	default:
+		home := homedir.HomeDir()
+		if home == emptyKubePath {
+			return loadInClusterConfig()
+		}
+
+		defaultPath := filepath.Join(home, ".kube", "config")
+		if fileMissing(defaultPath) {
+			return loadInClusterConfig()
+		}
+
+		paths = []string{defaultPath}
 	}
 
 	loadingRules := new(clientcmd.ClientConfigLoadingRules)
-	loadingRules.ExplicitPath = kubeconfigPath
+	loadingRules.Precedence = paths
 	overrides := new(clientcmd.ConfigOverrides)
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules,
