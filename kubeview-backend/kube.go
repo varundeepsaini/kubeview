@@ -219,6 +219,19 @@ func (c *Client) GetPodLogs(
 	namespace, name, container string,
 	tailLines int64,
 ) (string, error) {
+	// Multi-container pods reject log requests without an explicit container
+	// (the API server answers 400), so fall back to the first spec container.
+	if container == emptyKubePath {
+		pod, err := c.GetPod(ctx, namespace, name)
+		if err != nil {
+			return emptyKubePath, err
+		}
+
+		if len(pod.Spec.Containers) > zeroCount {
+			container = pod.Spec.Containers[zeroCount].Name
+		}
+	}
+
 	opts := podLogOptions(tailLines, container)
 	req := c.clientset.CoreV1().Pods(namespace).GetLogs(name, opts)
 

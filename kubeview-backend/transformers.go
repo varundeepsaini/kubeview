@@ -226,7 +226,17 @@ func podContainerSummary(pod *corev1.Pod) podSummary {
 func podContainers(pod *corev1.Pod) []Container {
 	containers := make([]Container, zeroCount, len(pod.Spec.Containers))
 
-	for idx, spec := range pod.Spec.Containers {
+	// The API server does not guarantee status.containerStatuses is ordered
+	// like spec.containers, so match statuses to spec entries by name.
+	statusByName := make(
+		map[string]corev1.ContainerStatus,
+		len(pod.Status.ContainerStatuses),
+	)
+	for _, status := range pod.Status.ContainerStatuses {
+		statusByName[status.Name] = status
+	}
+
+	for _, spec := range pod.Spec.Containers {
 		ports := make([]string, zeroCount, len(spec.Ports))
 		for _, port := range spec.Ports {
 			ports = append(
@@ -241,8 +251,7 @@ func podContainers(pod *corev1.Pod) []Container {
 			state        = statusWaiting
 		)
 
-		if idx < len(pod.Status.ContainerStatuses) {
-			cs := pod.Status.ContainerStatuses[idx]
+		if cs, ok := statusByName[spec.Name]; ok {
 			ready = cs.Ready
 			restartCount = cs.RestartCount
 			state = containerState(&cs)

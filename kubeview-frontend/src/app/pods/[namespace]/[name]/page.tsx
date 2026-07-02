@@ -33,6 +33,10 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
   if (error) return <ErrorMessage message={error} onRetry={refresh} />;
   if (!pod) return <ErrorMessage message="Pod not found" />;
 
+  // Multi-container pods reject log requests without an explicit container,
+  // so always target a concrete container, defaulting to the first one.
+  const activeContainer = selectedContainer || pod.containers[0]?.name || "";
+
   return (
     <div>
       {/* Header */}
@@ -58,7 +62,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
             key={tab}
             onClick={() => {
               setActiveTab(tab);
-              if (tab === "logs" && !logs) fetchLogs(selectedContainer);
+              if (tab === "logs" && !logs) fetchLogs(activeContainer);
             }}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
@@ -173,21 +177,20 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
             <div className="flex items-center gap-3">
               {pod.containers.length > 1 && (
                 <select
-                  value={selectedContainer}
+                  value={activeContainer}
                   onChange={(e) => {
                     setSelectedContainer(e.target.value);
                     fetchLogs(e.target.value);
                   }}
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
-                  <option value="">All containers</option>
                   {pod.containers.map((c) => (
                     <option key={c.name} value={c.name}>{c.name}</option>
                   ))}
                 </select>
               )}
               <button
-                onClick={() => fetchLogs(selectedContainer)}
+                onClick={() => fetchLogs(activeContainer)}
                 className="px-3 py-1.5 bg-accent/10 text-accent rounded-lg text-xs hover:bg-accent/20 transition-colors"
               >
                 Refresh

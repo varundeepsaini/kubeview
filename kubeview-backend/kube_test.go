@@ -27,11 +27,13 @@ const (
 	ktPodWeb           = "web"
 	ktPodA             = "a"
 	ktContainerSidecar = "sidecar"
+	ktContainerMain    = "main"
 	ktNameAPI          = "api"
 	ktReasonScheduled  = "Scheduled"
 	ktPlatformAMD64    = "linux/amd64"
 	ktVersionGit       = "v1.30.0"
 	ktSubresourceLog   = "log"
+	ktVerbGet          = "get"
 	ktEnvKubeconfig    = "KUBECONFIG"
 	ktConfigFileName   = "config"
 	ktEmpty            = ""
@@ -90,6 +92,7 @@ var (
 	ktZeroTime          metav1.Time
 	ktZeroMicroTime     metav1.MicroTime
 	ktZeroPodSpec       corev1.PodSpec
+	ktZeroContainer     corev1.Container
 	ktZeroPodStatus     corev1.PodStatus
 	ktZeroNamespaceSpec corev1.NamespaceSpec
 	ktZeroNamespaceStat corev1.NamespaceStatus
@@ -434,9 +437,67 @@ func TestClient_GetPodLogs(t *testing.T) {
 	t.Run("returns fake logs body (default reactor)", testGetPodLogsDefault)
 	t.Run("passes container option through", testGetPodLogsContainer)
 	t.Run(
-		"empty container -> empty Container option (server picks default)",
+		"empty container -> defaults to first spec container",
 		testGetPodLogsEmptyContainer,
 	)
+	t.Run(
+		"explicit container -> no pod lookup",
+		testGetPodLogsExplicitSkipsPodLookup,
+	)
+	t.Run(
+		"empty container + missing pod -> NotFound from pod lookup",
+		testGetPodLogsMissingPodPropagatesNotFound,
+	)
+}
+
+func testGetPodLogsExplicitSkipsPodLookup(t *testing.T) {
+	t.Parallel(
+	// The first-spec-container fallback must not cost an extra pod GET when
+	// the caller already names a container.
+	)
+
+	client, clientset := newTestClient(
+		t, nil,
+		ktNewPod(ktPodWeb, ktNamespaceDefault),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktContainerSidecar,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	for _, action := range clientset.Actions() {
+		if action.GetVerb() == ktVerbGet &&
+			action.GetResource().Resource == ktResourcePods &&
+			action.GetSubresource() == ktEmpty {
+			t.Fatal("explicit container must not trigger a pod lookup")
+		}
+	}
+}
+
+func testGetPodLogsMissingPodPropagatesNotFound(t *testing.T) {
+	t.Parallel()
+
+	client, _ := newTestClient(t, nil)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	if err == nil {
+		t.Fatal("expected error for missing pod")
+	}
+
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("expected NotFound, got %v", err)
+	}
 }
 
 func testGetPodLogsDefault(t *testing.T) {
@@ -507,7 +568,7 @@ func testGetPodLogsContainer(t *testing.T) {
 	}
 
 	clientset.PrependReactor(
-		"get",
+		ktVerbGet,
 		ktResourcePods,
 		logReactor(t, "logs for "+ktContainerSidecar, observe),
 	)
@@ -535,17 +596,26 @@ func testGetPodLogsContainer(t *testing.T) {
 }
 
 func testGetPodLogsEmptyContainer(t *testing.T) {
-	t.Parallel()
-
-	client, clientset := newTestClient(
-		t, nil,
-		ktNewPod(ktPodWeb, ktNamespaceDefault),
+	t.Parallel(
+	// Multi-container pods reject log requests without an explicit container
+	// (the API server answers 400), so an empty container must fall back to
+	// the first container in the pod spec.
 	)
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+	sidecarContainer := ktZeroContainer
+	sidecarContainer.Name = ktContainerSidecar
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer, sidecarContainer}
+
+	client, clientset := newTestClient(t, nil, pod)
 
 	var captured string
 
 	clientset.PrependReactor(
-		"get",
+		ktVerbGet,
 		ktResourcePods,
 		logReactor(t, "ok", func(opts *corev1.PodLogOptions) {
 			captured = opts.Container
@@ -561,8 +631,12 @@ func testGetPodLogsEmptyContainer(t *testing.T) {
 	)
 	requireNoErr(t, err)
 
-	if captured != ktEmpty {
-		t.Fatalf("expected empty Container option, got %q", captured)
+	if captured != ktContainerMain {
+		t.Fatalf(
+			"expected Container option %q, got %q",
+			ktContainerMain,
+			captured,
+		)
 	}
 }
 
