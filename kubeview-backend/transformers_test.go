@@ -746,6 +746,55 @@ func TestTransformPod_PartialStatusReadyCount(
 	}
 }
 
+func TestTransformPod_ContainerStatusesMatchedByNameNotIndex(t *testing.T) {
+	t.Parallel(
+	// The API server does not guarantee status.containerStatuses is ordered
+	// like spec.containers; statuses must be matched by container name.
+	)
+
+	statusA := ttBuild172() // name "a", ready, zero restarts
+	statusA.State = corev1.ContainerState{
+		Running: &corev1.ContainerStateRunning{
+			StartedAt: metav1.Time{
+				Time: time.Time{},
+			},
+		},
+		Waiting:    nil,
+		Terminated: nil,
+	}
+
+	statusB := ttBuild172()
+	statusB.Name = ttSB
+	statusB.Ready = false
+	statusB.RestartCount = ttN2
+	statusB.State = corev1.ContainerState{
+		Waiting: &corev1.ContainerStateWaiting{
+			Reason:  ttEmptyStr,
+			Message: ttEmptyStr,
+		},
+		Running:    nil,
+		Terminated: nil,
+	}
+
+	pod := ttBuild352() // spec containers ordered [a, b]
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{statusB, statusA}
+
+	got := transformPod(pod)
+	wantEq(t, "containers len", len(got.Containers), ttN2)
+
+	first := got.Containers[ttZeroNum]
+	wantEq(t, "containers[0] name", first.Name, ttSA)
+	wantEq(t, "containers[0] ready", first.Ready, true)
+	wantEq(t, "containers[0] restartCount", first.RestartCount, ttZeroNum)
+	wantEq(t, "containers[0] state", first.State, ttRunning)
+
+	second := got.Containers[ttN1]
+	wantEq(t, "containers[1] name", second.Name, ttSB)
+	wantEq(t, "containers[1] ready", second.Ready, false)
+	wantEq(t, "containers[1] restartCount", second.RestartCount, ttN2)
+	wantEq(t, "containers[1] state", second.State, ttWaiting)
+}
+
 func TestTransformPod_ConditionsAndVolumesArePreserved(t *testing.T) {
 	t.Parallel()
 
@@ -6764,7 +6813,7 @@ func ttBuild176() corev1.ContainerStatus {
 			Running:    nil,
 			Terminated: nil,
 		},
-		Name: ttEmptyStr,
+		Name: ttSC,
 		LastTerminationState: corev1.ContainerState{
 			Waiting:    nil,
 			Running:    nil,
@@ -11952,7 +12001,7 @@ func ttBuildReasonPod1(r string) *corev1.Pod {
 						Waiting: nil,
 						Running: nil,
 					},
-					Name: ttEmptyStr,
+					Name: ttSC,
 					LastTerminationState: corev1.ContainerState{
 						Waiting:    nil,
 						Running:    nil,
@@ -12015,7 +12064,7 @@ func ttBuildReasonPod2(r string) *corev1.Pod {
 						Running:    nil,
 						Terminated: nil,
 					},
-					Name: ttEmptyStr,
+					Name: ttSC,
 					LastTerminationState: corev1.ContainerState{
 						Waiting:    nil,
 						Running:    nil,
