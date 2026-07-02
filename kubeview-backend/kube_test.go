@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/discovery"
 	discoveryfake "k8s.io/client-go/discovery/fake"
 	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	core "k8s.io/client-go/testing"
 )
 
@@ -39,6 +40,7 @@ const (
 	ktBodyOK                     = "ok"
 	ktMsgContainerOpt            = "expected Container option %q, got %q"
 	ktEnvKubeconfig              = "KUBECONFIG"
+	ktEnvHome                    = "HOME"
 	ktConfigFileName             = "config"
 	ktEmpty                      = ""
 
@@ -1019,10 +1021,27 @@ users:
 
 func TestLoadKubeConfig_MissingFile(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	// An explicitly configured KUBECONFIG that does not exist is a hard
+	// error (matching kubectl), never a silent in-cluster fallback.
 	t.Setenv(ktEnvKubeconfig, filepath.Join(t.TempDir(), "does-not-exist"))
 
 	if loadKubeConfigErr() == nil {
 		t.Fatal("expected error for missing kubeconfig")
+	}
+}
+
+func TestLoadKubeConfig_NoKubeconfigFallsBackToInCluster(t *testing.T) {
+	// NOTE: mutates KUBECONFIG/HOME via t.Setenv; not parallel-safe.
+	// Without KUBECONFIG and without ~/.kube/config the loader must attempt
+	// the in-cluster service-account config; outside a pod that attempt
+	// fails with rest.ErrNotInCluster, which identifies the code path.
+	t.Setenv(ktEnvKubeconfig, ktEmpty)
+	t.Setenv(ktEnvHome, t.TempDir())
+	t.Setenv("KUBERNETES_SERVICE_HOST", ktEmpty)
+
+	err := loadKubeConfigErr()
+	if !errors.Is(err, rest.ErrNotInCluster) {
+		t.Fatalf("err = %v, want rest.ErrNotInCluster", err)
 	}
 }
 
@@ -1102,7 +1121,7 @@ users:
   user: {token: fake}
 `)
 	t.Setenv(ktEnvKubeconfig, ktEmpty)
-	t.Setenv("HOME", home)
+	t.Setenv(ktEnvHome, home)
 
 	_, kc, err := loadKubeConfig()
 	requireNoErr(t, err)
@@ -1118,7 +1137,7 @@ users:
 func TestLoadKubeConfig_HomeUnset(t *testing.T) {
 	// NOTE: mutates HOME/KUBECONFIG via t.Setenv; not parallel-safe.
 	t.Setenv(ktEnvKubeconfig, ktEmpty)
-	t.Setenv("HOME", ktEmpty)
+	t.Setenv(ktEnvHome, ktEmpty)
 
 	if loadKubeConfigErr() == nil {
 		t.Fatal("expected error when neither KUBECONFIG nor HOME is set")

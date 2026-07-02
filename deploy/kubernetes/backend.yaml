@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubeview-backend
+  namespace: kubeview
+  labels:
+    app: kubeview-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubeview-backend
+  template:
+    metadata:
+      labels:
+        app: kubeview-backend
+    spec:
+      serviceAccountName: kubeview-backend
+      securityContext:
+        runAsNonRoot: true
+        # Numeric UID of the distroless "nonroot" user — kubelet cannot
+        # verify runAsNonRoot against a non-numeric image USER.
+        runAsUser: 65532
+        runAsGroup: 65532
+      containers:
+        - name: backend
+          # Build locally and load into your cluster (e.g. `kind load
+          # docker-image kubeview-backend:latest`) or push to a registry and
+          # update this reference.
+          image: kubeview-backend:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            # Origin the dashboard is served from, as seen by the browser.
+            # Must match how you expose the frontend Service.
+            - name: CORS_ORIGIN
+              value: http://localhost:5500
+          ports:
+            - containerPort: 5501
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubeview-backend
+  namespace: kubeview
+  labels:
+    app: kubeview-backend
+spec:
+  selector:
+    app: kubeview-backend
+  ports:
+    - name: http
+      port: 5501
+      targetPort: http
