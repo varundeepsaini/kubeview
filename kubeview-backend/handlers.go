@@ -42,9 +42,13 @@ const maxTailLines = 5000
 // what the frontend expects in kubeview-frontend/src/lib/api.ts.
 
 type Container struct {
-	Name         string   `json:"name"`
-	Image        string   `json:"image"`
-	State        string   `json:"state"`
+	Name  string `json:"name"`
+	Image string `json:"image"`
+	State string `json:"state"`
+	// Kind distinguishes regular containers from init containers, native
+	// sidecars (init containers with restartPolicy Always), and ephemeral
+	// debug containers: "container" | "init" | "sidecar" | "ephemeral".
+	Kind         string   `json:"kind"`
 	Ports        []string `json:"ports"`
 	RestartCount int32    `json:"restartCount"`
 	Ready        bool     `json:"ready"`

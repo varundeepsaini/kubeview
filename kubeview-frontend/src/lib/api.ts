@@ -28,6 +28,7 @@ export interface Namespace {
 export interface Container {
   name: string;
   image: string;
+  kind: "container" | "init" | "sidecar" | "ephemeral";
   ports: string[];
   ready: boolean;
   state: string;
@@ -55,6 +56,7 @@ export interface Pod {
   containers: Container[];
   conditions: PodCondition[];
   volumes: { name: string; type: string }[];
+  defaultContainer: string;
 }
 
 export interface DeploymentCondition {

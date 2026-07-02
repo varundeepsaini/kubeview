@@ -642,17 +642,17 @@ func assertWebPod(t *testing.T, web Pod) {
 func assertWebContainers(t *testing.T, containers []Container) {
 	t.Helper()
 
-	if len(containers) != itTwo {
-		t.Fatalf("web containers = %d, want 2", len(containers))
+	if len(containers) != itThree {
+		t.Fatalf("web containers = %d, want 3", len(containers))
 	}
 
 	cnames := namesOf(containers, func(c Container) string { return c.Name })
-	wantSubset(t, cnames, []string{itCtrApp, itCtrCar})
+	wantSubset(t, cnames, []string{itCtrApp, itCtrCar, itCtrInit})
 
-	// Init container "init-db" should NOT be in the list.
+	// Init container "init-db" is surfaced and tagged with its kind.
 	for _, c := range containers {
-		if c.Name == itCtrInit {
-			t.Fatal("init container leaked into containers list")
+		if c.Name == itCtrInit && c.Kind != "init" {
+			t.Fatalf("init container kind = %q, want init", c.Kind)
 		}
 	}
 }

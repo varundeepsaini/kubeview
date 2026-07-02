@@ -34,8 +34,12 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
   if (!pod) return <ErrorMessage message="Pod not found" />;
 
   // Multi-container pods reject log requests without an explicit container,
-  // so always target a concrete container, defaulting to the first one.
-  const activeContainer = selectedContainer || pod.containers[0]?.name || "";
+  // so always target a concrete container: the pod's default-container
+  // annotation when valid, else the first container.
+  const annotatedDefault = pod.containers.some((c) => c.name === pod.defaultContainer)
+    ? pod.defaultContainer
+    : "";
+  const activeContainer = selectedContainer || annotatedDefault || pod.containers[0]?.name || "";
 
   return (
     <div>
@@ -86,6 +90,9 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{c.name}</span>
+                      {c.kind !== "container" && (
+                        <span className="px-2 py-0.5 bg-white/5 rounded text-xs text-muted">{c.kind}</span>
+                      )}
                       <StatusBadge status={c.state} />
                     </div>
                     <span className="text-xs text-muted">Restarts: {c.restartCount}</span>
@@ -185,7 +192,9 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
                   {pod.containers.map((c) => (
-                    <option key={c.name} value={c.name}>{c.name}</option>
+                    <option key={c.name} value={c.name}>
+                      {c.kind === "container" ? c.name : `${c.name} (${c.kind})`}
+                    </option>
                   ))}
                 </select>
               )}

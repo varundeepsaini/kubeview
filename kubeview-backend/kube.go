@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -220,16 +221,16 @@ func (c *Client) GetPodLogs(
 	tailLines int64,
 ) (string, error) {
 	// Multi-container pods reject log requests without an explicit container
-	// (the API server answers 400), so fall back to the first spec container.
+	// (the API server answers 400), so fall back to the container kubectl
+	// would pick: the default-container annotation when it names a real
+	// container, else the first spec container.
 	if container == emptyKubePath {
 		pod, err := c.GetPod(ctx, namespace, name)
 		if err != nil {
 			return emptyKubePath, err
 		}
 
-		if len(pod.Spec.Containers) > zeroCount {
-			container = pod.Spec.Containers[zeroCount].Name
-		}
+		container = defaultLogContainer(pod)
 	}
 
 	opts := podLogOptions(tailLines, container)
@@ -248,6 +249,38 @@ func (c *Client) GetPodLogs(
 	}
 
 	return string(raw), nil
+}
+
+// defaultLogContainer picks the container a log request should target when
+// the caller did not name one: the kubectl.kubernetes.io/default-container
+// annotation when it names any container in the spec (kubectl resolves the
+// annotation against regular, init, and ephemeral containers alike), else
+// the first regular spec container.
+func defaultLogContainer(pod *corev1.Pod) string {
+	if annotated, ok := pod.Annotations[annotationDefaultContainer]; ok {
+		if specContainerExists(pod, annotated) {
+			return annotated
+		}
+	}
+
+	if len(pod.Spec.Containers) > zeroCount {
+		return pod.Spec.Containers[zeroCount].Name
+	}
+
+	return emptyKubePath
+}
+
+// specContainerExists reports whether any regular, init, or ephemeral
+// container in the pod spec has the given name.
+func specContainerExists(pod *corev1.Pod, name string) bool {
+	hasName := func(c corev1.Container) bool { return c.Name == name }
+
+	return slices.ContainsFunc(pod.Spec.Containers, hasName) ||
+		slices.ContainsFunc(pod.Spec.InitContainers, hasName) ||
+		slices.ContainsFunc(
+			pod.Spec.EphemeralContainers,
+			func(c corev1.EphemeralContainer) bool { return c.Name == name },
+		)
 }
 
 func closeLogStream(stream io.Closer) {
