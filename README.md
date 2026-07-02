@@ -53,6 +53,27 @@ npm run dev
 ```
 The dashboard is now running at http://localhost:5500. Open it in your browser.
 
+## Configuration
+
+Both services default to localhost ports but can be configured for non-local deployments via environment variables:
+
+| Variable | Service | Default | Purpose |
+|----------|---------|---------|---------|
+| `PORT` | backend | `5501` | Port the API listens on. |
+| `CORS_ORIGIN` | backend | `http://localhost:5500` | Comma-separated list of allowed browser origins, e.g. `https://kubeview.example.com,http://localhost:5500`. |
+| `KUBECONFIG` | backend | `~/.kube/config` | Path to the kubeconfig used to reach the cluster. |
+| `NEXT_PUBLIC_API_BASE` | frontend | `http://localhost:5501/api` | Backend API base URL, inlined at build time (`npm run build`). |
+
+Example:
+
+```bash
+# Backend on port 8080, accepting requests from a deployed frontend
+PORT=8080 CORS_ORIGIN=https://kubeview.example.com go run .
+
+# Frontend built against a deployed backend
+NEXT_PUBLIC_API_BASE=https://api.kubeview.example.com/api npm run build
+```
+
 ## API reference
 
 The backend exposes the following endpoints. All responses are JSON.

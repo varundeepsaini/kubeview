@@ -8,12 +8,15 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
+// frontendOrigin is the dev-server default, used when CORS_ORIGIN is unset.
 const frontendOrigin = "http://localhost:5500"
 
 // Query/path parameter names and HTTP-related numeric bounds.
@@ -74,11 +77,40 @@ type DeploymentCondition struct {
 	LastTransition string `json:"lastTransition,omitempty"`
 }
 
+// parseCORSOrigins splits the CORS_ORIGIN environment value (a
+// comma-separated origin list) into individual origins, falling back to the
+// dev frontend when the value is empty.
+func parseCORSOrigins(raw string) []string {
+	parts := strings.Split(raw, ",")
+	origins := make([]string, zeroCount, len(parts))
+
+	for _, part := range parts {
+		if origin := strings.TrimSpace(part); origin != emptyString {
+			origins = append(origins, origin)
+		}
+	}
+
+	if len(origins) == zeroCount {
+		return []string{frontendOrigin}
+	}
+
+	return origins
+}
+
 // withCORS allows the API to be called cross-origin. Narrow on purpose: only
-// the whitelisted dev frontend, never "*".
-func withCORS(next http.Handler) http.Handler {
+// origins from the allowed list (CORS_ORIGIN env, dev frontend by default),
+// never "*". A request Origin on the list is echoed back; anything else gets
+// the first allowed origin, which browsers then reject.
+func withCORS(next http.Handler, allowed []string) http.Handler {
 	handler := func(writer http.ResponseWriter, req *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", frontendOrigin)
+		origin := allowed[zeroCount]
+
+		requestOrigin := req.Header.Get("Origin")
+		if slices.Contains(allowed, requestOrigin) {
+			origin = requestOrigin
+		}
+
+		writer.Header().Set("Access-Control-Allow-Origin", origin)
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 

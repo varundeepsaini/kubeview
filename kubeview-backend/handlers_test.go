@@ -135,9 +135,14 @@ const (
 	htContentJSON = "application/json"
 	htACAOValue   = "http://localhost:5500"
 
+	htOriginExample = "https://kubeview.example.com"
+	htHdrACAO       = "Access-Control-Allow-Origin"
+	htOriginEvil    = "https://evil.example.com"
+
 	htMsgStatus     = "status = %d"
 	htMsgStatusBody = "status = %d, body = %s"
 	htMsgNewReq     = "new request: %v"
+	htMsgOrigins    = "origins = %v"
 	htMsgDecode     = "decode: %v"
 
 	htPodNotFoundMsg = "Pod not found"
@@ -169,7 +174,7 @@ func newTestServer(
 	t.Helper()
 
 	c, _ := newTestClient(t, sv, objs...)
-	srv := httptest.NewServer(withCORS(newRouter(c)))
+	srv := httptest.NewServer(withCORS(newRouter(c), parseCORSOrigins(htEmpty)))
 	t.Cleanup(srv.Close)
 
 	return srv, c
@@ -840,7 +845,7 @@ func corsGETHeaders(srv *httptest.Server) func(*testing.T) {
 
 		res := httpGet(t, srv.URL+htPathHealth)
 
-		got := res.header.Get("Access-Control-Allow-Origin")
+		got := res.header.Get(htHdrACAO)
 		if got != htACAOValue {
 			t.Fatalf("ACAO = %q", got)
 		}
@@ -874,6 +879,93 @@ func assertPreflightHeaders(t *testing.T, res httpResult) {
 	if res.header.Get("Access-Control-Allow-Headers") == "" {
 		t.Fatal("ACAH missing")
 	}
+}
+
+func TestParseCORSOrigins_EmptyYieldsDevDefault(t *testing.T) {
+	t.Parallel()
+
+	got := parseCORSOrigins(htEmpty)
+	if len(got) != htOne || got[htZero] != htACAOValue {
+		t.Fatalf(htMsgOrigins, got)
+	}
+}
+
+func TestParseCORSOrigins_CommaListSplitAndTrimmed(t *testing.T) {
+	t.Parallel()
+
+	got := parseCORSOrigins(htOriginExample + " , " + htACAOValue)
+	if len(got) != htTwo {
+		t.Fatalf(htMsgOrigins, got)
+	}
+
+	if got[htZero] != htOriginExample || got[htOne] != htACAOValue {
+		t.Fatalf(htMsgOrigins, got)
+	}
+}
+
+func TestCORS_ConfiguredOrigins(t *testing.T) {
+	t.Parallel(
+	// With CORS_ORIGIN configured to several origins, a request whose Origin
+	// header matches any of them gets that origin echoed back; anything else
+	// falls back to the first configured origin so browsers block it.
+	)
+
+	origins := []string{htOriginExample, htACAOValue}
+	srv := httptest.NewServer(withCORS(newRouter(nil), origins))
+	t.Cleanup(srv.Close)
+
+	cases := []struct {
+		name       string
+		origin     string
+		wantHeader string
+	}{
+		{"second configured origin echoed", htACAOValue, htACAOValue},
+		{"first configured origin echoed", htOriginExample, htOriginExample},
+		{"unknown origin falls back to first", htOriginEvil, htOriginExample},
+		{"no origin header falls back to first", htEmpty, htOriginExample},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := preflightACAO(t, srv.URL+htPathHealth, tc.origin)
+			if got != tc.wantHeader {
+				t.Fatalf("ACAO = %q, want %q", got, tc.wantHeader)
+			}
+		})
+	}
+}
+
+// preflightACAO issues an OPTIONS request with the given Origin header (when
+// non-empty) and returns the Access-Control-Allow-Origin response header.
+func preflightACAO(t *testing.T, url, origin string) string {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(
+		context.Background(), http.MethodOptions, url, nil,
+	)
+	if err != nil {
+		t.Fatalf(htMsgNewReq, err)
+	}
+
+	if origin != htEmpty {
+		req.Header.Set("Origin", origin)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+
+	defer func() {
+		cerr := resp.Body.Close()
+		if cerr != nil {
+			t.Errorf("close: %v", cerr)
+		}
+	}()
+
+	return resp.Header.Get(htHdrACAO)
 }
 
 // --- error mapping ---
@@ -1291,7 +1383,7 @@ func corsRouteCase(t *testing.T, srv *httptest.Server, path string) {
 
 	res := httpGet(t, srv.URL+path)
 
-	got := res.header.Get("Access-Control-Allow-Origin")
+	got := res.header.Get(htHdrACAO)
 	if got != htACAOValue {
 		t.Fatalf("%s -> ACAO = %q", path, got)
 	}
