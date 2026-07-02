@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -252,13 +253,13 @@ func (c *Client) GetPodLogs(
 
 // defaultLogContainer picks the container a log request should target when
 // the caller did not name one: the kubectl.kubernetes.io/default-container
-// annotation when it names a spec container, else the first spec container.
+// annotation when it names any container in the spec (kubectl resolves the
+// annotation against regular, init, and ephemeral containers alike), else
+// the first regular spec container.
 func defaultLogContainer(pod *corev1.Pod) string {
 	if annotated, ok := pod.Annotations[annotationDefaultContainer]; ok {
-		for _, spec := range pod.Spec.Containers {
-			if spec.Name == annotated {
-				return annotated
-			}
+		if specContainerExists(pod, annotated) {
+			return annotated
 		}
 	}
 
@@ -267,6 +268,19 @@ func defaultLogContainer(pod *corev1.Pod) string {
 	}
 
 	return emptyKubePath
+}
+
+// specContainerExists reports whether any regular, init, or ephemeral
+// container in the pod spec has the given name.
+func specContainerExists(pod *corev1.Pod, name string) bool {
+	hasName := func(c corev1.Container) bool { return c.Name == name }
+
+	return slices.ContainsFunc(pod.Spec.Containers, hasName) ||
+		slices.ContainsFunc(pod.Spec.InitContainers, hasName) ||
+		slices.ContainsFunc(
+			pod.Spec.EphemeralContainers,
+			func(c corev1.EphemeralContainer) bool { return c.Name == name },
+		)
 }
 
 func closeLogStream(stream io.Closer) {

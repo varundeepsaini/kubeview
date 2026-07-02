@@ -229,8 +229,9 @@ func isRestartableInit(spec *corev1.Container) bool {
 
 // podContainerSummary reports the number of ready containers, the total
 // container count, and the aggregate restart count for a pod. Native
-// sidecars count toward all three, matching kubectl; plain init containers
-// count toward none.
+// sidecars count toward all three, matching kubectl (their total comes from
+// the spec, so unscheduled pods with no statuses still count them); plain
+// init containers count toward none, matching kubectl's steady state.
 func podContainerSummary(pod *corev1.Pod) podSummary {
 	total := len(pod.Status.ContainerStatuses)
 	if total == zeroCount {
@@ -252,21 +253,33 @@ func podContainerSummary(pod *corev1.Pod) podSummary {
 	return summary
 }
 
-// addSidecarCounts folds native-sidecar statuses into the pod summary.
-func addSidecarCounts(pod *corev1.Pod, summary *podSummary) {
-	sidecars := make(map[string]bool, len(pod.Spec.InitContainers))
+// specSidecars returns the names of the native sidecars (restartable init
+// containers) among the given init container specs.
+func specSidecars(initContainers []corev1.Container) map[string]bool {
+	sidecars := make(map[string]bool, len(initContainers))
 
-	for idx := range pod.Spec.InitContainers {
-		spec := &pod.Spec.InitContainers[idx]
-		sidecars[spec.Name] = isRestartableInit(spec)
+	for idx := range initContainers {
+		if isRestartableInit(&initContainers[idx]) {
+			sidecars[initContainers[idx].Name] = true
+		}
 	}
+
+	return sidecars
+}
+
+// addSidecarCounts folds native sidecars into the pod summary: the total
+// comes from the spec (statuses only exist once the kubelet has the pod, but
+// kubectl counts sidecars for unscheduled pods too), ready/restarts from the
+// statuses.
+func addSidecarCounts(pod *corev1.Pod, summary *podSummary) {
+	sidecars := specSidecars(pod.Spec.InitContainers)
+	summary.total += len(sidecars)
 
 	for _, status := range pod.Status.InitContainerStatuses {
 		if !sidecars[status.Name] {
 			continue
 		}
 
-		summary.total++
 		if status.Ready {
 			summary.ready++
 		}

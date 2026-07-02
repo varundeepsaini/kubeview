@@ -457,6 +457,10 @@ func TestClient_GetPodLogs(t *testing.T) {
 		testGetPodLogsBogusAnnotationFallsBack,
 	)
 	t.Run(
+		"annotation naming an init container is honored",
+		testGetPodLogsAnnotationNamesInitContainer,
+	)
+	t.Run(
 		"empty container + missing pod -> NotFound from pod lookup",
 		testGetPodLogsMissingPodPropagatesNotFound,
 	)
@@ -697,6 +701,52 @@ func testGetPodLogsDefaultContainerAnnotation(t *testing.T) {
 			ktContainerSidecar,
 			captured,
 		)
+	}
+}
+
+func testGetPodLogsAnnotationNamesInitContainer(t *testing.T) {
+	t.Parallel(
+	// kubectl resolves the default-container annotation against regular,
+	// init, and ephemeral containers alike (podcmd.FindContainerByName), so
+	// an annotation naming a native sidecar living in initContainers must be
+	// honored too.
+	)
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+	sidecarContainer := ktZeroContainer
+	sidecarContainer.Name = ktContainerSidecar
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer}
+	pod.Spec.InitContainers = []corev1.Container{sidecarContainer}
+	pod.Annotations = map[string]string{
+		ktAnnotationDefaultContainer: ktContainerSidecar,
+	}
+
+	client, clientset := newTestClient(t, nil, pod)
+
+	var captured string
+
+	clientset.PrependReactor(
+		ktVerbGet,
+		ktResourcePods,
+		logReactor(t, ktBodyOK, func(opts *corev1.PodLogOptions) {
+			captured = opts.Container
+		}),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	if captured != ktContainerSidecar {
+		t.Fatalf(ktMsgContainerOpt, ktContainerSidecar, captured)
 	}
 }
 

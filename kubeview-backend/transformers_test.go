@@ -97,6 +97,8 @@ const (
 	ttTerminating           = "Terminating"
 	ttApp                   = "app"
 	ttLblContainersLen      = "containers len"
+	ttLblReady              = "ready"
+	ttLblRestarts           = "restarts"
 	ttSInit                 = "initdb"
 	ttSProxy                = "proxy"
 	ttSDebug                = "debug"
@@ -603,8 +605,8 @@ func TestTransformPod_RunningPodWithSingleContainer(t *testing.T) {
 	wantEq(t, ttLblName, got.Name, ttSWeb)
 	wantEq(t, ttLblNamespace, got.Namespace, ttDefault)
 	wantEq(t, "status", got.Status, ttRunning)
-	wantEq(t, "ready", got.Ready, "1/1")
-	wantEq(t, "restarts", got.Restarts, ttN2)
+	wantEq(t, ttLblReady, got.Ready, "1/1")
+	wantEq(t, ttLblRestarts, got.Restarts, ttN2)
 	wantEq(t, "node", got.Node, ttSNode1)
 	wantEq(t, "ip", got.IP, ttPodIP)
 	wantEq(t, ttLblContainersLen, len(got.Containers), ttN1)
@@ -782,10 +784,36 @@ func ttSidecarPod() *corev1.Pod {
 	appStatus.Ready = true
 	initStatus := ttZeroContainerStatus
 	initStatus.Name = ttSInit
+	initStatus.State = corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{
+			Reason:   ttCompleted,
+			ExitCode: ttZeroNum,
+			Signal:   ttZeroNum,
+			Message:  ttEmptyStr,
+			StartedAt: metav1.Time{
+				Time: time.Time{},
+			},
+			FinishedAt: metav1.Time{
+				Time: time.Time{},
+			},
+			ContainerID: ttEmptyStr,
+		},
+		Waiting: nil,
+		Running: nil,
+	}
 	proxyStatus := ttZeroContainerStatus
 	proxyStatus.Name = ttSProxy
 	proxyStatus.Ready = true
 	proxyStatus.RestartCount = ttN3
+	proxyStatus.State = corev1.ContainerState{
+		Running: &corev1.ContainerStateRunning{
+			StartedAt: metav1.Time{
+				Time: time.Time{},
+			},
+		},
+		Waiting:    nil,
+		Terminated: nil,
+	}
 	debugStatus := ttZeroContainerStatus
 	debugStatus.Name = ttSDebug
 
@@ -815,10 +843,12 @@ func TestTransformPod_InitSidecarEphemeralContainersSurfaced(t *testing.T) {
 	wantEq(t, "0 kind", got.Containers[ttZeroNum].Kind, "container")
 	wantEq(t, "1 name", got.Containers[ttN1].Name, ttSInit)
 	wantEq(t, "1 kind", got.Containers[ttN1].Kind, "init")
+	wantEq(t, "1 state", got.Containers[ttN1].State, ttCompleted)
 	wantEq(t, "2 name", got.Containers[ttN2].Name, ttSProxy)
 	wantEq(t, "2 kind", got.Containers[ttN2].Kind, "sidecar")
 	wantEq(t, "2 ready", got.Containers[ttN2].Ready, true)
 	wantEq(t, "2 restarts", got.Containers[ttN2].RestartCount, ttN3)
+	wantEq(t, "2 state", got.Containers[ttN2].State, ttRunning)
 	wantEq(t, "3 name", got.Containers[ttN3].Name, ttSDebug)
 	wantEq(t, "3 kind", got.Containers[ttN3].Kind, "ephemeral")
 }
@@ -831,8 +861,27 @@ func TestTransformPod_SidecarCountsInReadyAndRestarts(t *testing.T) {
 	)
 
 	got := transformPod(ttSidecarPod())
-	wantEq(t, "ready", got.Ready, "2/2")
-	wantEq(t, "restarts", got.Restarts, ttN3)
+	wantEq(t, ttLblReady, got.Ready, "2/2")
+	wantEq(t, ttLblRestarts, got.Restarts, ttN3)
+}
+
+func TestTransformPod_UnscheduledSidecarPodCountsSidecarInTotal(t *testing.T) {
+	t.Parallel(
+	// An unscheduled pod (Pending on resources/affinity/taints) has all
+	// three status lists empty for its entire unscheduled lifetime — the
+	// kubelet writes statuses only after binding. kubectl still counts
+	// native sidecars into the READY denominator from the spec, so a pod
+	// with one app container and one sidecar must read 0/2, not 0/1.
+	)
+
+	pod := ttSidecarPod()
+	pod.Status.ContainerStatuses = nil
+	pod.Status.InitContainerStatuses = nil
+	pod.Status.EphemeralContainerStatuses = nil
+
+	got := transformPod(pod)
+	wantEq(t, ttLblReady, got.Ready, "0/2")
+	wantEq(t, ttLblRestarts, got.Restarts, ttZeroNum)
 }
 
 func TestTransformPod_DefaultContainerAnnotationExposed(t *testing.T) {
