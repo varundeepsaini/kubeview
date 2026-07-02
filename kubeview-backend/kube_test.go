@@ -33,6 +33,7 @@ const (
 	ktPlatformAMD64    = "linux/amd64"
 	ktVersionGit       = "v1.30.0"
 	ktSubresourceLog   = "log"
+	ktVerbGet          = "get"
 	ktEnvKubeconfig    = "KUBECONFIG"
 	ktConfigFileName   = "config"
 	ktEmpty            = ""
@@ -470,7 +471,7 @@ func testGetPodLogsExplicitSkipsPodLookup(t *testing.T) {
 	requireNoErr(t, err)
 
 	for _, action := range clientset.Actions() {
-		if action.GetVerb() == "get" &&
+		if action.GetVerb() == ktVerbGet &&
 			action.GetResource().Resource == ktResourcePods &&
 			action.GetSubresource() == ktEmpty {
 			t.Fatal("explicit container must not trigger a pod lookup")
@@ -567,7 +568,7 @@ func testGetPodLogsContainer(t *testing.T) {
 	}
 
 	clientset.PrependReactor(
-		"get",
+		ktVerbGet,
 		ktResourcePods,
 		logReactor(t, "logs for "+ktContainerSidecar, observe),
 	)
@@ -614,7 +615,7 @@ func testGetPodLogsEmptyContainer(t *testing.T) {
 	var captured string
 
 	clientset.PrependReactor(
-		"get",
+		ktVerbGet,
 		ktResourcePods,
 		logReactor(t, "ok", func(opts *corev1.PodLogOptions) {
 			captured = opts.Container
