@@ -28,6 +28,7 @@ export interface Namespace {
 export interface Container {
   name: string;
   image: string;
+  kind: "container" | "init" | "sidecar" | "ephemeral";
   ports: string[];
   ready: boolean;
   state: string;

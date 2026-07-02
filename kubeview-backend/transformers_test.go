@@ -96,6 +96,10 @@ const (
 	ttRunning               = "Running"
 	ttTerminating           = "Terminating"
 	ttApp                   = "app"
+	ttLblContainersLen      = "containers len"
+	ttSInit                 = "initdb"
+	ttSProxy                = "proxy"
+	ttSDebug                = "debug"
 	ttReady                 = "Ready"
 	ttAPI                   = "api"
 	ttAPIImage              = "api:1"
@@ -603,7 +607,7 @@ func TestTransformPod_RunningPodWithSingleContainer(t *testing.T) {
 	wantEq(t, "restarts", got.Restarts, ttN2)
 	wantEq(t, "node", got.Node, ttSNode1)
 	wantEq(t, "ip", got.IP, ttPodIP)
-	wantEq(t, "containers len", len(got.Containers), ttN1)
+	wantEq(t, ttLblContainersLen, len(got.Containers), ttN1)
 
 	c := got.Containers[ttZeroNum]
 	wantEq(t, "container name", c.Name, ttSNginx)
@@ -746,6 +750,91 @@ func TestTransformPod_PartialStatusReadyCount(
 	}
 }
 
+// Zero-value K8s structs mutated per test to dodge exhaustruct (see the
+// matching var block in kube_test.go for the rationale).
+var (
+	ttZeroSpecContainer   corev1.Container
+	ttZeroContainerStatus corev1.ContainerStatus
+	ttZeroEphemeralCommon corev1.EphemeralContainerCommon
+)
+
+// ttSidecarPod builds a pod with one app container, one plain init
+// container, one restartable init container (native sidecar), and one
+// ephemeral debug container, with statuses for all of them.
+func ttSidecarPod() *corev1.Pod {
+	app := ttZeroSpecContainer
+	app.Name = ttApp
+	initdb := ttZeroSpecContainer
+	initdb.Name = ttSInit
+	always := corev1.ContainerRestartPolicyAlways
+	proxy := ttZeroSpecContainer
+	proxy.Name = ttSProxy
+	proxy.RestartPolicy = &always
+
+	debug := corev1.EphemeralContainer{
+		EphemeralContainerCommon: ttZeroEphemeralCommon,
+		TargetContainerName:      ttEmptyStr,
+	}
+	debug.Name = ttSDebug
+
+	appStatus := ttZeroContainerStatus
+	appStatus.Name = ttApp
+	appStatus.Ready = true
+	initStatus := ttZeroContainerStatus
+	initStatus.Name = ttSInit
+	proxyStatus := ttZeroContainerStatus
+	proxyStatus.Name = ttSProxy
+	proxyStatus.Ready = true
+	proxyStatus.RestartCount = ttN3
+	debugStatus := ttZeroContainerStatus
+	debugStatus.Name = ttSDebug
+
+	pod := ttBuild352()
+	pod.Spec.Containers = []corev1.Container{app}
+	pod.Spec.InitContainers = []corev1.Container{initdb, proxy}
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{debug}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{appStatus}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		initStatus,
+		proxyStatus,
+	}
+	pod.Status.EphemeralContainerStatuses = []corev1.ContainerStatus{
+		debugStatus,
+	}
+
+	return pod
+}
+
+func TestTransformPod_InitSidecarEphemeralContainersSurfaced(t *testing.T) {
+	t.Parallel()
+
+	got := transformPod(ttSidecarPod())
+	wantEq(t, ttLblContainersLen, len(got.Containers), ttN4)
+
+	wantEq(t, "0 name", got.Containers[ttZeroNum].Name, ttApp)
+	wantEq(t, "0 kind", got.Containers[ttZeroNum].Kind, "container")
+	wantEq(t, "1 name", got.Containers[ttN1].Name, ttSInit)
+	wantEq(t, "1 kind", got.Containers[ttN1].Kind, "init")
+	wantEq(t, "2 name", got.Containers[ttN2].Name, ttSProxy)
+	wantEq(t, "2 kind", got.Containers[ttN2].Kind, "sidecar")
+	wantEq(t, "2 ready", got.Containers[ttN2].Ready, true)
+	wantEq(t, "2 restarts", got.Containers[ttN2].RestartCount, ttN3)
+	wantEq(t, "3 name", got.Containers[ttN3].Name, ttSDebug)
+	wantEq(t, "3 kind", got.Containers[ttN3].Kind, "ephemeral")
+}
+
+func TestTransformPod_SidecarCountsInReadyAndRestarts(t *testing.T) {
+	t.Parallel(
+	// kubectl counts restartable init containers (native sidecars) in both
+	// the READY totals and the restart column; plain init containers are
+	// excluded from both.
+	)
+
+	got := transformPod(ttSidecarPod())
+	wantEq(t, "ready", got.Ready, "2/2")
+	wantEq(t, "restarts", got.Restarts, ttN3)
+}
+
 func TestTransformPod_DefaultContainerAnnotationExposed(t *testing.T) {
 	t.Parallel()
 
@@ -799,7 +888,7 @@ func TestTransformPod_ContainerStatusesMatchedByNameNotIndex(t *testing.T) {
 	pod.Status.ContainerStatuses = []corev1.ContainerStatus{statusB, statusA}
 
 	got := transformPod(pod)
-	wantEq(t, "containers len", len(got.Containers), ttN2)
+	wantEq(t, ttLblContainersLen, len(got.Containers), ttN2)
 
 	first := got.Containers[ttZeroNum]
 	wantEq(t, "containers[0] name", first.Name, ttSA)
@@ -1426,19 +1515,23 @@ func TestPodJSONHasFrontendFields(t *testing.T) {
 
 // --- additional edge-case tests ------------------------------------------
 
-func TestTransformPod_InitContainersExcluded(t *testing.T) {
+func TestTransformPod_InitAndEphemeralContainersIncluded(t *testing.T) {
 	t.Parallel(
-	// The JS transformer only iterates pod.spec.containers, never
-	// initContainers or ephemeralContainers. We mirror that: init/ephemeral
-	// shouldn't leak into the frontend's containers list.
+	// Init and ephemeral containers are surfaced alongside regular ones,
+	// tagged with their kind, with regular containers listed first.
 	)
 
 	pod := ttBuild335()
 
 	got := transformPod(pod)
-	if len(got.Containers) != ttN1 || got.Containers[ttZeroNum].Name != ttApp {
-		t.Fatalf("containers should be [app], got %+v", got.Containers)
+	if len(got.Containers) != ttN3 {
+		t.Fatalf("containers len = %d, want 3", len(got.Containers))
 	}
+
+	wantEq(t, "0 name", got.Containers[ttZeroNum].Name, ttApp)
+	wantEq(t, "0 kind", got.Containers[ttZeroNum].Kind, "container")
+	wantEq(t, "1 kind", got.Containers[ttN1].Kind, "init")
+	wantEq(t, "2 kind", got.Containers[ttN2].Kind, "ephemeral")
 }
 
 func TestTransformPod_HostIPAndPodIPEmpty(t *testing.T) {

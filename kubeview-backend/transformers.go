@@ -45,6 +45,14 @@ const (
 	annotationDefaultContainer = "kubectl.kubernetes.io/default-container"
 )
 
+// Container.Kind values (see the Container response shape in handlers.go).
+const (
+	kindContainer = "container"
+	kindInit      = "init"
+	kindSidecar   = "sidecar"
+	kindEphemeral = "ephemeral"
+)
+
 // podSummary aggregates per-container counters for a pod.
 type podSummary struct {
 	ready    int
@@ -212,8 +220,17 @@ func transformPod(pod *corev1.Pod) Pod {
 	}
 }
 
+// isRestartableInit reports whether an init container is a native sidecar
+// (restartPolicy: Always, Kubernetes >= 1.29).
+func isRestartableInit(spec *corev1.Container) bool {
+	return spec.RestartPolicy != nil &&
+		*spec.RestartPolicy == corev1.ContainerRestartPolicyAlways
+}
+
 // podContainerSummary reports the number of ready containers, the total
-// container count, and the aggregate restart count for a pod.
+// container count, and the aggregate restart count for a pod. Native
+// sidecars count toward all three, matching kubectl; plain init containers
+// count toward none.
 func podContainerSummary(pod *corev1.Pod) podSummary {
 	total := len(pod.Status.ContainerStatuses)
 	if total == zeroCount {
@@ -230,51 +247,127 @@ func podContainerSummary(pod *corev1.Pod) podSummary {
 		summary.restarts += status.RestartCount
 	}
 
+	addSidecarCounts(pod, &summary)
+
 	return summary
 }
 
-func podContainers(pod *corev1.Pod) []Container {
-	containers := make([]Container, zeroCount, len(pod.Spec.Containers))
+// addSidecarCounts folds native-sidecar statuses into the pod summary.
+func addSidecarCounts(pod *corev1.Pod, summary *podSummary) {
+	sidecars := make(map[string]bool, len(pod.Spec.InitContainers))
 
-	// The API server does not guarantee status.containerStatuses is ordered
-	// like spec.containers, so match statuses to spec entries by name.
-	statusByName := make(
-		map[string]corev1.ContainerStatus,
-		len(pod.Status.ContainerStatuses),
-	)
-	for _, status := range pod.Status.ContainerStatuses {
-		statusByName[status.Name] = status
+	for idx := range pod.Spec.InitContainers {
+		spec := &pod.Spec.InitContainers[idx]
+		sidecars[spec.Name] = isRestartableInit(spec)
 	}
 
-	for _, spec := range pod.Spec.Containers {
-		ports := make([]string, zeroCount, len(spec.Ports))
-		for _, port := range spec.Ports {
-			ports = append(
-				ports,
-				fmt.Sprintf("%d/%s", port.ContainerPort, port.Protocol),
-			)
+	for _, status := range pod.Status.InitContainerStatuses {
+		if !sidecars[status.Name] {
+			continue
 		}
 
-		var (
-			ready        bool
-			restartCount int32
-			state        = statusWaiting
+		summary.total++
+		if status.Ready {
+			summary.ready++
+		}
+
+		summary.restarts += status.RestartCount
+	}
+}
+
+// podStatusIndex merges all three containerStatuses lists into one
+// name-indexed map. The API server does not guarantee any of them is
+// ordered like its spec counterpart, so lookups must go by name.
+func podStatusIndex(pod *corev1.Pod) map[string]corev1.ContainerStatus {
+	size := len(pod.Status.ContainerStatuses) +
+		len(pod.Status.InitContainerStatuses) +
+		len(pod.Status.EphemeralContainerStatuses)
+
+	statusByName := make(map[string]corev1.ContainerStatus, size)
+
+	for _, list := range [][]corev1.ContainerStatus{
+		pod.Status.ContainerStatuses,
+		pod.Status.InitContainerStatuses,
+		pod.Status.EphemeralContainerStatuses,
+	} {
+		for _, status := range list {
+			statusByName[status.Name] = status
+		}
+	}
+
+	return statusByName
+}
+
+// buildContainer assembles the response shape for one container spec,
+// attaching its status (matched by name) when present.
+func buildContainer(
+	name, image, kind string,
+	specPorts []corev1.ContainerPort,
+	statusByName map[string]corev1.ContainerStatus,
+) Container {
+	ports := make([]string, zeroCount, len(specPorts))
+	for _, port := range specPorts {
+		ports = append(
+			ports,
+			fmt.Sprintf("%d/%s", port.ContainerPort, port.Protocol),
 		)
+	}
 
-		if cs, ok := statusByName[spec.Name]; ok {
-			ready = cs.Ready
-			restartCount = cs.RestartCount
-			state = containerState(&cs)
+	var (
+		ready        bool
+		restartCount int32
+		state        = statusWaiting
+	)
+
+	if cs, ok := statusByName[name]; ok {
+		ready = cs.Ready
+		restartCount = cs.RestartCount
+		state = containerState(&cs)
+	}
+
+	return Container{
+		Name:         name,
+		Image:        image,
+		Kind:         kind,
+		Ports:        ports,
+		Ready:        ready,
+		State:        state,
+		RestartCount: restartCount,
+	}
+}
+
+func podContainers(pod *corev1.Pod) []Container {
+	size := len(pod.Spec.Containers) +
+		len(pod.Spec.InitContainers) +
+		len(pod.Spec.EphemeralContainers)
+	containers := make([]Container, zeroCount, size)
+	statusByName := podStatusIndex(pod)
+
+	for idx := range pod.Spec.Containers {
+		spec := &pod.Spec.Containers[idx]
+		containers = append(containers, buildContainer(
+			spec.Name, spec.Image, kindContainer, spec.Ports, statusByName,
+		))
+	}
+
+	for idx := range pod.Spec.InitContainers {
+		spec := &pod.Spec.InitContainers[idx]
+
+		kind := kindInit
+		if isRestartableInit(spec) {
+			kind = kindSidecar
 		}
 
-		containers = append(containers, Container{
-			Name:         spec.Name,
-			Image:        spec.Image,
-			Ports:        ports,
-			Ready:        ready,
-			State:        state,
-			RestartCount: restartCount,
-		})
+		containers = append(containers, buildContainer(
+			spec.Name, spec.Image, kind, spec.Ports, statusByName,
+		))
+	}
+
+	for idx := range pod.Spec.EphemeralContainers {
+		spec := &pod.Spec.EphemeralContainers[idx]
+		containers = append(containers, buildContainer(
+			spec.Name, spec.Image, kindEphemeral, spec.Ports, statusByName,
+		))
 	}
 
 	return containers

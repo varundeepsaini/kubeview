@@ -90,6 +90,9 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-3">
                       <span className="font-medium">{c.name}</span>
+                      {c.kind !== "container" && (
+                        <span className="px-2 py-0.5 bg-white/5 rounded text-xs text-muted">{c.kind}</span>
+                      )}
                       <StatusBadge status={c.state} />
                     </div>
                     <span className="text-xs text-muted">Restarts: {c.restartCount}</span>
@@ -189,7 +192,9 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
                   {pod.containers.map((c) => (
-                    <option key={c.name} value={c.name}>{c.name}</option>
+                    <option key={c.name} value={c.name}>
+                      {c.kind === "container" ? c.name : `${c.name} (${c.kind})`}
+                    </option>
                   ))}
                 </select>
               )}
