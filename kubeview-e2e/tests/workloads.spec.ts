@@ -38,10 +38,13 @@ test("nodes page shows the cluster node as Ready with a version", async ({
 
 test("namespaces page shows e2e-demo as Active", async ({ page }) => {
   await page.goto("/namespaces");
-  const card = page.locator("div", {
+  // Scope to the single e2e-demo card (direct grid child) so the status
+  // badge belongs to e2e-demo, not whichever namespace sorts first.
+  const card = page.locator(".grid-cols-3 > div", {
     has: page.getByRole("heading", { name: "e2e-demo", exact: true }),
   });
-  await expect(card.getByText("Active").first()).toBeVisible();
+  await expect(card).toHaveCount(1);
+  await expect(card.getByText("Active", { exact: true })).toBeVisible();
 });
 
 test("namespaces search filters the cards", async ({ page }) => {

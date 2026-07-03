@@ -15,6 +15,9 @@ kubectl context, plus Go and Node installed.
 
 ```bash
 # 1. Seed the deterministic fixtures the specs assert against.
+#    Re-run these two lines before each test session: the events specs assert
+#    on pod lifecycle events, which Kubernetes garbage-collects after ~1h.
+kubectl delete -f fixtures.yaml --ignore-not-found
 kubectl apply -f fixtures.yaml
 kubectl -n e2e-demo wait --for=condition=Ready pod/e2e-logger pod/e2e-multi --timeout=120s
 
