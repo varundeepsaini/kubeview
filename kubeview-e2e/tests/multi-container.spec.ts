@@ -12,19 +12,25 @@ test.describe("multi-container pod", () => {
     await expect(page.getByText("sidecar", { exact: true })).toBeVisible();
   });
 
-  test("logs tab exposes a container picker with both containers", async ({
+  test("logs default to the first container and the picker switches containers", async ({
     page,
   }) => {
     await page.goto("/pods/e2e-demo/e2e-multi");
     await page.getByRole("button", { name: "Logs" }).click();
 
-    // The picker only renders for multi-container pods.
+    // The picker only renders for multi-container pods, with both containers.
     const picker = page.getByRole("combobox");
     await expect(picker).toBeVisible();
     await expect(picker.getByRole("option")).toHaveCount(2);
 
-    // Selecting the sidecar must not error the log pane.
+    // Default (first) container's real output must render — this is the #4/#6
+    // regression guard: the pre-fix bug sent no container and got a 400, so
+    // no marker would ever appear.
+    await expect(page.getByText("E2E_MAIN_MARKER").first()).toBeVisible();
+    await expect(page.getByText("E2E_SIDECAR_MARKER")).toHaveCount(0);
+
+    // Switching to the sidecar shows *its* output, not the main container's.
     await picker.selectOption("sidecar");
-    await expect(page.getByText(/HTTP-Code: 400/)).toHaveCount(0);
+    await expect(page.getByText("E2E_SIDECAR_MARKER").first()).toBeVisible();
   });
 });

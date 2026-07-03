@@ -146,6 +146,9 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
+    # Bound a cluster-creating job so a wedged cluster or a stalled
+    # download can't burn hours of runner time.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -166,12 +169,30 @@ jobs:
         uses: helm/kind-action@v1
         with:
           cluster_name: kubeview-e2e
+          # Pin the Kubernetes version so the cluster under test doesn't drift
+          # between runs with kind-action releases.
+          node_image: kindest/node:v1.34.0
+
+      # Preload the fixture image into the node from the runner's Docker so the
+      # kubelet never does an anonymous Docker Hub pull (shared-runner-IP rate
+      # limits cause flaky ImagePullBackOff otherwise).
+      - name: Preload fixture image
+        run: |
+          docker pull busybox:1.36
+          kind load docker-image busybox:1.36 --name kubeview-e2e
 
       - name: Apply cluster fixtures
         run: |
           kubectl apply -f kubeview-e2e/fixtures.yaml
           kubectl -n e2e-demo wait --for=condition=Ready \
             pod/e2e-logger pod/e2e-multi --timeout=120s
+
+      # Compile the backend up front so its cold build doesn't ride inside
+      # Playwright's webServer health-check window (fail fast on a build error
+      # instead of an opaque server-start timeout).
+      - name: Warm up backend build
+        working-directory: kubeview-backend
+        run: go build ./...
 
       - name: Build frontend
         working-directory: kubeview-frontend
