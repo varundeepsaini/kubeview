@@ -3,13 +3,16 @@ import { test, expect } from "@playwright/test";
 // Regression coverage for the multi-container fixes (issues #4/#6): the logs
 // tab must offer a per-container picker and default to a concrete container.
 test.describe("multi-container pod", () => {
-  test("overview lists both containers", async ({ page }) => {
+  test("overview lists both containers with their image", async ({ page }) => {
     await page.goto("/pods/e2e-demo/e2e-multi");
     await expect(
       page.getByRole("heading", { name: "e2e-multi", exact: true }),
     ).toBeVisible();
+    await expect(page.getByText("Containers (2)")).toBeVisible();
     await expect(page.getByText("main", { exact: true })).toBeVisible();
     await expect(page.getByText("sidecar", { exact: true })).toBeVisible();
+    // Both containers run the same fixture image.
+    await expect(page.getByText("busybox:1.36")).toHaveCount(2);
   });
 
   test("logs default to the first container and the picker switches containers", async ({

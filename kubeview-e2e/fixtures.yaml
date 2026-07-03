@@ -13,6 +13,9 @@ metadata:
   namespace: e2e-demo
   labels:
     app: e2e-logger
+    # Distinctive value so the pod-detail Labels section can be asserted
+    # without colliding with other UI text.
+    tier: e2e-fixture-label
 spec:
   containers:
     - name: logger
