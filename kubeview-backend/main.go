@@ -56,7 +56,7 @@ func run() error {
 		port = defaultPort
 	}
 
-	client, err := NewClient()
+	manager, err := NewClientManager()
 	if err != nil {
 		return fmt.Errorf("init kubernetes client: %w", err)
 	}
@@ -66,7 +66,7 @@ func run() error {
 
 	server := new(http.Server)
 	server.Addr = ":" + port
-	server.Handler = withCORS(newRouter(client), corsOrigins)
+	server.Handler = withCORS(newRouter(manager), corsOrigins)
 	server.ReadTimeout = readTimeout
 	server.WriteTimeout = writeTimeout
 	server.IdleTimeout = idleTimeout

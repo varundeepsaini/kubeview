@@ -43,6 +43,7 @@ const (
 	ktEnvHome                    = "HOME"
 	ktConfigFileName             = "config"
 	ktEmpty                      = ""
+	ktCtxMy                      = "my-ctx"
 
 	ktResourcePods        = "pods"
 	ktResourceDeployments = "deployments"
@@ -1011,7 +1012,7 @@ users:
 		t.Fatal("nil rest config")
 	}
 
-	if kc.contextName != "my-ctx" {
+	if kc.contextName != ktCtxMy {
 		t.Fatalf("ctx = %q", kc.contextName)
 	}
 
@@ -1083,7 +1084,7 @@ func TestLoadKubeConfig_ColonListUsesFirstReadableFile(t *testing.T) {
 		t.Fatal("nil rest config")
 	}
 
-	if kc.contextName != "my-ctx" {
+	if kc.contextName != ktCtxMy {
 		t.Fatalf("ctx = %q", kc.contextName)
 	}
 }

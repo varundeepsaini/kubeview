@@ -24,6 +24,7 @@ const (
 	paramNamespace = "namespace"
 	paramName      = "name"
 	paramContainer = "container"
+	paramContext   = "context"
 
 	defaultTailLines = 100
 	logTailBase      = 10
@@ -131,22 +132,74 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 	return http.HandlerFunc(handler)
 }
 
-func newRouter(client *Client) *http.ServeMux {
-	const podLogsRoute = "GET /api/pods/{namespace}/{name}/logs"
+func newRouter(manager *ClientManager) *http.ServeMux {
+	const (
+		podDetailRoute = "GET /api/pods/{namespace}/{name}"
+		podLogsRoute   = "GET /api/pods/{namespace}/{name}/logs"
+	)
+
+	// wrap binds a resource handler to the manager so per-request client
+	// resolution (from ?context=) happens in one place.
+	wrap := func(handler contextHandler) http.HandlerFunc {
+		return withClient(manager, handler)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/health", handleHealth)
-	mux.HandleFunc("GET /api/cluster", handleCluster(client))
-	mux.HandleFunc("GET /api/namespaces", handleNamespaces(client))
-	mux.HandleFunc("GET /api/pods", handlePods(client))
-	mux.HandleFunc("GET /api/pods/{namespace}/{name}", handlePod(client))
-	mux.HandleFunc(podLogsRoute, handlePodLogs(client))
-	mux.HandleFunc("GET /api/deployments", handleDeployments(client))
-	mux.HandleFunc("GET /api/services", handleServices(client))
-	mux.HandleFunc("GET /api/nodes", handleNodes(client))
-	mux.HandleFunc("GET /api/events", handleEvents(client))
+	mux.HandleFunc("GET /api/contexts", handleContexts(manager))
+	mux.HandleFunc("GET /api/cluster", wrap(handleCluster))
+	mux.HandleFunc("GET /api/namespaces", wrap(handleNamespaces))
+	mux.HandleFunc("GET /api/pods", wrap(handlePods))
+	mux.HandleFunc(podDetailRoute, wrap(handlePod))
+	mux.HandleFunc(podLogsRoute, wrap(handlePodLogs))
+	mux.HandleFunc("GET /api/deployments", wrap(handleDeployments))
+	mux.HandleFunc("GET /api/services", wrap(handleServices))
+	mux.HandleFunc("GET /api/nodes", wrap(handleNodes))
+	mux.HandleFunc("GET /api/events", wrap(handleEvents))
 
 	return mux
+}
+
+// contextHandler is a resource handler that has already had its per-request
+// *Client resolved from the ?context= query parameter by withClient.
+type contextHandler func(*Client, http.ResponseWriter, *http.Request)
+
+// withClient resolves the client for the request's ?context= value (falling
+// back to the default context when absent) and invokes handler with it. An
+// unknown context name is a 400; any other resolution failure surfaces through
+// writeError. Keeping this in one place spares every resource handler from
+// repeating the resolve-and-check dance.
+func withClient(
+	manager *ClientManager,
+	handler contextHandler,
+) http.HandlerFunc {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		client, err := manager.ClientFor(req.URL.Query().Get(paramContext))
+		if err != nil {
+			if errors.Is(err, errUnknownContext) {
+				writeJSONError(
+					writer, http.StatusBadRequest, "Unknown context",
+				)
+
+				return
+			}
+
+			writeError(writer, err)
+
+			return
+		}
+
+		handler(client, writer, req)
+	}
+}
+
+// handleContexts lists the kubeconfig contexts available for switching. It
+// reads from the loaded kubeconfig, not a live cluster, so it succeeds even
+// when the active context is unreachable — letting the UI offer a way back.
+func handleContexts(manager *ClientManager) http.HandlerFunc {
+	return func(writer http.ResponseWriter, _ *http.Request) {
+		writeJSON(writer, http.StatusOK, manager.Contexts())
+	}
 }
 
 func handleHealth(writer http.ResponseWriter, _ *http.Request) {
@@ -156,105 +209,115 @@ func handleHealth(writer http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func handleCluster(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		info, err := client.GetClusterInfo(req.Context())
-		if err != nil {
-			writeError(writer, err)
+func handleCluster(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	info, err := client.GetClusterInfo(req.Context())
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		writeJSON(writer, http.StatusOK, info)
+		return
 	}
+
+	writeJSON(writer, http.StatusOK, info)
 }
 
-func handleNamespaces(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		items, err := client.ListNamespaces(req.Context())
-		if err != nil {
-			writeError(writer, err)
+func handleNamespaces(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	items, err := client.ListNamespaces(req.Context())
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]Namespace, emptyCount, len(items))
-		for _, ns := range items {
-			out = append(out, transformNamespace(ns))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]Namespace, emptyCount, len(items))
+	for _, ns := range items {
+		out = append(out, transformNamespace(ns))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func handlePods(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		namespace := req.URL.Query().Get(paramNamespace)
+func handlePods(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
 
-		items, err := client.ListPods(req.Context(), namespace)
-		if err != nil {
-			writeError(writer, err)
+	items, err := client.ListPods(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]Pod, emptyCount, len(items))
-		for i := range items {
-			out = append(out, transformPod(&items[i]))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]Pod, emptyCount, len(items))
+	for i := range items {
+		out = append(out, transformPod(&items[i]))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func handlePod(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		namespace := req.PathValue(paramNamespace)
-		name := req.PathValue(paramName)
+func handlePod(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.PathValue(paramNamespace)
+	name := req.PathValue(paramName)
 
-		pod, err := client.GetPod(req.Context(), namespace, name)
-		if err != nil {
-			if isNotFound(err) {
-				writeJSONError(writer, http.StatusNotFound, "Pod not found")
-
-				return
-			}
-
-			writeError(writer, err)
+	pod, err := client.GetPod(req.Context(), namespace, name)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(writer, http.StatusNotFound, "Pod not found")
 
 			return
 		}
 
-		writeJSON(writer, http.StatusOK, transformPod(pod))
+		writeError(writer, err)
+
+		return
 	}
+
+	writeJSON(writer, http.StatusOK, transformPod(pod))
 }
 
-func handlePodLogs(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		query := req.URL.Query()
-		tailLines := parseTailLines(query.Get("tailLines"))
+func handlePodLogs(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	query := req.URL.Query()
+	tailLines := parseTailLines(query.Get("tailLines"))
 
-		logs, err := client.GetPodLogs(
-			req.Context(),
-			req.PathValue(paramNamespace),
-			req.PathValue(paramName),
-			query.Get(paramContainer),
-			tailLines,
-		)
-		if err != nil {
-			if isNotFound(err) {
-				writeJSONError(writer, http.StatusNotFound, "Pod not found")
-
-				return
-			}
-
-			writeError(writer, err)
+	logs, err := client.GetPodLogs(
+		req.Context(),
+		req.PathValue(paramNamespace),
+		req.PathValue(paramName),
+		query.Get(paramContainer),
+		tailLines,
+	)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(writer, http.StatusNotFound, "Pod not found")
 
 			return
 		}
 
-		writeJSON(writer, http.StatusOK, map[string]string{"logs": logs})
+		writeError(writer, err)
+
+		return
 	}
+
+	writeJSON(writer, http.StatusOK, map[string]string{"logs": logs})
 }
 
 // parseTailLines resolves the requested log tail length, falling back to a
@@ -273,82 +336,90 @@ func parseTailLines(raw string) int64 {
 	return min(n, maxTailLines)
 }
 
-func handleDeployments(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		namespace := req.URL.Query().Get(paramNamespace)
+func handleDeployments(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
 
-		items, err := client.ListDeployments(req.Context(), namespace)
-		if err != nil {
-			writeError(writer, err)
+	items, err := client.ListDeployments(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]Deployment, emptyCount, len(items))
-		for _, dep := range items {
-			out = append(out, transformDeployment(dep))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]Deployment, emptyCount, len(items))
+	for _, dep := range items {
+		out = append(out, transformDeployment(dep))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func handleServices(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		namespace := req.URL.Query().Get(paramNamespace)
+func handleServices(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
 
-		items, err := client.ListServices(req.Context(), namespace)
-		if err != nil {
-			writeError(writer, err)
+	items, err := client.ListServices(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]Service, emptyCount, len(items))
-		for _, svc := range items {
-			out = append(out, transformService(svc))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]Service, emptyCount, len(items))
+	for _, svc := range items {
+		out = append(out, transformService(svc))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func handleNodes(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		items, err := client.ListNodes(req.Context())
-		if err != nil {
-			writeError(writer, err)
+func handleNodes(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	items, err := client.ListNodes(req.Context())
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]NodeInfo, emptyCount, len(items))
-		for _, node := range items {
-			out = append(out, transformNode(node))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]NodeInfo, emptyCount, len(items))
+	for _, node := range items {
+		out = append(out, transformNode(node))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func handleEvents(client *Client) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		namespace := req.URL.Query().Get(paramNamespace)
+func handleEvents(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
 
-		items, err := client.ListEvents(req.Context(), namespace)
-		if err != nil {
-			writeError(writer, err)
+	items, err := client.ListEvents(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
 
-			return
-		}
-
-		out := make([]KubeEvent, emptyCount, len(items))
-		for _, event := range items {
-			out = append(out, transformEvent(event))
-		}
-
-		writeJSON(writer, http.StatusOK, out)
+		return
 	}
+
+	out := make([]KubeEvent, emptyCount, len(items))
+	for _, event := range items {
+		out = append(out, transformEvent(event))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
 }
 
 // --- response helpers ---
