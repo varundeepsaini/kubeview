@@ -128,36 +128,48 @@ func loadInClusterConfig() (*rest.Config, kubeContext, error) {
 	}, nil
 }
 
+// resolveKubeconfigPaths determines the kubeconfig precedence paths, or signals
+// that the in-cluster service account should be used instead. An explicitly
+// configured KUBECONFIG is honored as-is (a colon-separated list is split and
+// merged, matching kubectl). Without it, the implicit ~/.kube/config default is
+// used only if present; otherwise useInCluster is true so the caller falls back
+// to the pod service account.
+func resolveKubeconfigPaths() ([]string, bool) {
+	explicit := os.Getenv("KUBECONFIG")
+	if explicit != emptyKubePath {
+		return filepath.SplitList(explicit), false
+	}
+
+	home := homedir.HomeDir()
+	if home == emptyKubePath {
+		return nil, true
+	}
+
+	defaultPath := filepath.Join(home, ".kube", "config")
+	if fileMissing(defaultPath) {
+		return nil, true
+	}
+
+	return []string{defaultPath}, false
+}
+
+// loadingRulesFor builds client-config loading rules with the given precedence.
+func loadingRulesFor(paths []string) *clientcmd.ClientConfigLoadingRules {
+	rules := new(clientcmd.ClientConfigLoadingRules)
+	rules.Precedence = paths
+
+	return rules
+}
+
 func loadKubeConfig() (*rest.Config, kubeContext, error) {
 	var emptyCtx kubeContext
 
-	explicit := os.Getenv("KUBECONFIG")
-
-	// An explicitly configured KUBECONFIG is honored as-is (a colon-separated
-	// list is split and merged, matching kubectl). Without it, the implicit
-	// ~/.kube/config default is used only if present; otherwise we assume the
-	// process runs as a pod and use the in-cluster service account.
-	var paths []string
-
-	switch {
-	case explicit != emptyKubePath:
-		paths = filepath.SplitList(explicit)
-	default:
-		home := homedir.HomeDir()
-		if home == emptyKubePath {
-			return loadInClusterConfig()
-		}
-
-		defaultPath := filepath.Join(home, ".kube", "config")
-		if fileMissing(defaultPath) {
-			return loadInClusterConfig()
-		}
-
-		paths = []string{defaultPath}
+	paths, useInCluster := resolveKubeconfigPaths()
+	if useInCluster {
+		return loadInClusterConfig()
 	}
 
-	loadingRules := new(clientcmd.ClientConfigLoadingRules)
-	loadingRules.Precedence = paths
+	loadingRules := loadingRulesFor(paths)
 	overrides := new(clientcmd.ConfigOverrides)
 	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		loadingRules,

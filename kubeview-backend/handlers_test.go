@@ -29,6 +29,7 @@ const (
 	htStatusOK     = http.StatusOK
 	htStatusForbid = http.StatusForbidden
 	htStatusNotF   = http.StatusNotFound
+	htStatusBadReq = http.StatusBadRequest
 	htStatusErr    = http.StatusInternalServerError
 
 	htRedirectFloor = 300
@@ -77,6 +78,7 @@ const (
 	htPathServices    = "/api/services"
 	htPathNodes       = "/api/nodes"
 	htPathEvents      = "/api/events"
+	htPathContexts    = "/api/contexts"
 	htPathPodDetail   = "/api/pods/default/web"
 	htPathPDetail     = "/api/pods/default/p"
 	htPathWebLogs     = "/api/pods/default/web/logs"
@@ -177,10 +179,26 @@ func newTestServer(
 	t.Helper()
 
 	c, _ := newTestClient(t, sv, objs...)
-	srv := httptest.NewServer(withCORS(newRouter(c), parseCORSOrigins(htEmpty)))
+	router := newRouter(managerForClient(c))
+	srv := httptest.NewServer(withCORS(router, parseCORSOrigins(htEmpty)))
 	t.Cleanup(srv.Close)
 
 	return srv, c
+}
+
+// managerForClient wraps an already-built *Client as a single-context manager,
+// so router tests exercise the real withClient path without a kubeconfig. The
+// client is pre-cached under the default context, so the (nil) build func is
+// never called.
+func managerForClient(c *Client) *ClientManager {
+	manager := new(ClientManager)
+	manager.clients = map[string]*Client{ktContextName: c}
+	manager.contexts = []ContextInfo{
+		{Name: ktContextName, Cluster: ktClusterName, Current: true},
+	}
+	manager.defaultContext = ktContextName
+
+	return manager
 }
 
 // doRequest issues a request with the given method, reads and closes the body,
@@ -330,6 +348,42 @@ func TestHandle_Health(t *testing.T) {
 	_, err := time.Parse(time.RFC3339, out["timestamp"])
 	if err != nil {
 		t.Fatalf("timestamp not RFC3339: %q (%v)", out["timestamp"], err)
+	}
+}
+
+// --- /api/contexts ---
+
+func TestHandle_Contexts(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, nil)
+
+	var out []ContextInfo
+
+	res := getJSON(t, srv, htPathContexts, &out)
+	if res.statusCode != htStatusOK {
+		t.Fatalf(htMsgStatus, res.statusCode)
+	}
+
+	requireLen(t, out, htOne)
+
+	if out[htFirst].Name != htTestContext ||
+		out[htFirst].Cluster != htTestCluster ||
+		!out[htFirst].Current {
+		t.Fatalf("context = %+v", out[htFirst])
+	}
+}
+
+// TestHandle_UnknownContext confirms an unresolvable ?context= is a 400 client
+// error, not a 500 — so a stale bookmark or typo doesn't look like a crash.
+func TestHandle_UnknownContext(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, nil)
+
+	res := getJSON(t, srv, htPathPods+"?context=does-not-exist", nil)
+	if res.statusCode != htStatusBadReq {
+		t.Fatalf(htMsgStatusBody, res.statusCode, res.body)
 	}
 }
 

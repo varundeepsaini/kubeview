@@ -3,13 +3,40 @@
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:5501/api";
 
+// currentContext is the ambient kubeconfig context appended to every request as
+// ?context=. Empty means "let the backend use its default (current) context".
+// ClusterProvider keeps this in sync with the user's selection so callers don't
+// have to thread the context through every api.getX signature.
+let currentContext = "";
+
+export function setApiContext(name: string): void {
+  currentContext = name;
+}
+
+// withContext appends the active context to a path, respecting any query string
+// the path already carries. Kept as string manipulation (not new URL) so a
+// relative NEXT_PUBLIC_API_BASE still works.
+function withContext(path: string): string {
+  if (!currentContext) return path;
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}context=${encodeURIComponent(currentContext)}`;
+}
+
 async function fetchApi<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const res = await fetch(`${API_BASE}${withContext(path)}`, {
+    cache: "no-store",
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `API error: ${res.status}`);
   }
   return res.json();
+}
+
+export interface ContextInfo {
+  name: string;
+  cluster: string;
+  current: boolean;
 }
 
 export interface ClusterInfo {
@@ -131,6 +158,7 @@ export interface KubeEvent {
 }
 
 export const api = {
+  getContexts: () => fetchApi<ContextInfo[]>("/contexts"),
   getCluster: () => fetchApi<ClusterInfo>("/cluster"),
   getNamespaces: () => fetchApi<Namespace[]>("/namespaces"),
   getPods: (ns?: string) => fetchApi<Pod[]>(ns ? `/pods?namespace=${ns}` : "/pods"),
