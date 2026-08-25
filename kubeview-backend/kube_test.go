@@ -122,7 +122,6 @@ func objectMeta(name, namespace string) metav1.ObjectMeta {
 		Name:                       name,
 		GenerateName:               ktEmpty,
 		Namespace:                  namespace,
-		SelfLink:                   ktEmpty,
 		UID:                        ktEmpty,
 		ResourceVersion:            ktEmpty,
 		Generation:                 ktZero,
