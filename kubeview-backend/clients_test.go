@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,6 +51,21 @@ func newTestManager(
 	}
 
 	return manager, builds
+}
+
+// The client timeout must stay under the server's write timeout: at the write
+// timeout the connection is severed mid-response, while a client timeout
+// before it still yields a JSON error. It must also leave room for legitimate
+// slow requests (pod-log tails, large lists) that writeTimeout budgets for.
+func TestClientRequestTimeoutUnderWriteTimeout(t *testing.T) {
+	t.Parallel()
+
+	if clientRequestTimeout >= writeTimeout {
+		t.Fatalf(
+			"clientRequestTimeout %v must be under writeTimeout %v",
+			clientRequestTimeout, writeTimeout,
+		)
+	}
 }
 
 func TestClientManager_ClientForDefault(t *testing.T) {
@@ -139,13 +155,106 @@ func TestNewClientManager_FromKubeconfig(t *testing.T) {
 		t.Fatalf("context = %+v", ctx)
 	}
 
-	_, err = manager.ClientFor(emptyString)
+	client, err := manager.ClientFor(emptyString)
 	if err != nil {
 		t.Fatalf("default context client: %v", err)
+	}
+
+	if client.context != ktCtxMy || client.cluster != "my-cluster" {
+		t.Fatalf("c = %+v", client)
+	}
+
+	if client.clientset == nil || client.discovery == nil {
+		t.Fatalf("client fields nil: %+v", client)
 	}
 
 	_, err = manager.ClientFor("missing")
 	if !errors.Is(err, errUnknownContext) {
 		t.Fatalf("err = %v, want errUnknownContext", err)
+	}
+}
+
+// newClientManagerErr runs NewClientManager against the given kubeconfig body
+// and returns only the error.
+func newClientManagerErr(t *testing.T, kubeconfig string) error {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), ktConfigFileName)
+	mustWrite(t, path, kubeconfig)
+	t.Setenv(ktEnvKubeconfig, path)
+
+	_, err := NewClientManager()
+
+	return err
+}
+
+// A kubeconfig config problem (rather than a bad ?context= request) must
+// surface as a config-shaped startup error, not errUnknownContext.
+
+func TestNewClientManager_NoCurrentContext(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	err := newClientManagerErr(
+		t,
+		strings.Replace(ktKubeconfigYAML, "current-context: my-ctx\n", "", 1),
+	)
+	if !errors.Is(err, errNoCurrentContext) {
+		t.Fatalf("err = %v, want errNoCurrentContext", err)
+	}
+}
+
+func TestNewClientManager_DanglingCurrentContext(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	err := newClientManagerErr(
+		t,
+		strings.Replace(ktKubeconfigYAML, "my-ctx\n", "gone-ctx\n", 1),
+	)
+	if !errors.Is(err, errBadCurrentContext) {
+		t.Fatalf("err = %v, want errBadCurrentContext", err)
+	}
+}
+
+func TestNewClientManager_MissingKubeconfigFile(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	// clientcmd silently skips missing precedence files, yielding an empty
+	// config; that must fail as "no contexts", not unknown context "".
+	t.Setenv(ktEnvKubeconfig, filepath.Join(t.TempDir(), "does-not-exist"))
+
+	_, err := NewClientManager()
+	if !errors.Is(err, errNoContexts) {
+		t.Fatalf("err = %v, want errNoContexts", err)
+	}
+}
+
+func TestNewClientManager_BadKubeconfig(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	err := newClientManagerErr(t, "this is not yaml: [[[")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+// TestNewClientManager_InvalidServerURLBreaksClientsetBuild covers the rare
+// kubernetes.NewForConfig error path in the eager default-client build. We
+// craft a kubeconfig whose server is not a parseable URL — clientcmd's
+// ClientConfig() builds the *rest.Config successfully, then
+// kubernetes.NewForConfig fails when it tries to derive the server URL.
+func TestNewClientManager_InvalidServerURLBreaksClientsetBuild(t *testing.T) {
+	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
+	err := newClientManagerErr(t, `apiVersion: v1
+kind: Config
+current-context: c
+clusters:
+- cluster:
+    server: "://not-a-url"
+  name: cl
+contexts:
+- context: {cluster: cl, user: u}
+  name: c
+users:
+- name: u
+  user: {token: fake}
+`)
+	if err == nil {
+		t.Fatal("expected error from clientset build with invalid server URL")
 	}
 }

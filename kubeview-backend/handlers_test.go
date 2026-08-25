@@ -130,6 +130,9 @@ const (
 	htVerbList = "list"
 	htSubLog   = "log"
 
+	htCtxOther     = "other-context"
+	htQueryContext = "?context="
+
 	htEmpty       = ""
 	htLogsHello   = "hello"
 	htLogsOK      = "ok"
@@ -381,9 +384,61 @@ func TestHandle_UnknownContext(t *testing.T) {
 
 	srv, _ := newTestServer(t, nil)
 
-	res := getJSON(t, srv, htPathPods+"?context=does-not-exist", nil)
+	res := getJSON(t, srv, htPathPods+htQueryContext+"does-not-exist", nil)
 	if res.statusCode != htStatusBadReq {
 		t.Fatalf(htMsgStatusBody, res.statusCode, res.body)
+	}
+}
+
+// TestHandle_ContextParamRoutesToSelectedClient proves ?context= actually
+// selects that context's client rather than always serving the default: two
+// contexts hold different pods, and each request must return the pod of the
+// context it names.
+func TestHandle_ContextParamRoutesToSelectedClient(t *testing.T) {
+	t.Parallel()
+
+	defClient, _ := newTestClient(t, nil, newRunningPod(htNameA, htNSDefault))
+	altClient, _ := newTestClient(t, nil, newRunningPod(htNameB, htNSDefault))
+
+	manager := new(ClientManager)
+	manager.clients = map[string]*Client{
+		ktContextName: defClient,
+		htCtxOther:    altClient,
+	}
+	manager.contexts = []ContextInfo{
+		{Name: ktContextName, Cluster: ktClusterName, Current: true},
+		{Name: htCtxOther, Cluster: htTestCluster, Current: false},
+	}
+	manager.defaultContext = ktContextName
+
+	srv := httptest.NewServer(
+		withCORS(newRouter(manager), parseCORSOrigins(htEmpty)),
+	)
+	t.Cleanup(srv.Close)
+
+	assertPodsForContext(t, srv, htEmpty, htNameA)
+	assertPodsForContext(t, srv, htQueryContext+ktContextName, htNameA)
+	assertPodsForContext(t, srv, htQueryContext+htCtxOther, htNameB)
+}
+
+// assertPodsForContext fetches /api/pods with the given query string and
+// asserts the response holds exactly one pod with the wanted name.
+func assertPodsForContext(
+	t *testing.T,
+	srv *httptest.Server,
+	query, want string,
+) {
+	t.Helper()
+
+	var out []Pod
+
+	res := getJSON(t, srv, htPathPods+query, &out)
+	if res.statusCode != htStatusOK {
+		t.Fatalf(htMsgStatusBody, res.statusCode, res.body)
+	}
+
+	if len(out) != htOne || out[htFirst].Name != want {
+		t.Fatalf("pods for %q = %+v, want [%s]", query, out, want)
 	}
 }
 

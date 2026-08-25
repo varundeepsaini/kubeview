@@ -292,17 +292,6 @@ func requireLen[T any](t *testing.T, got []T, want int) {
 	}
 }
 
-// loadKubeConfigErr runs loadKubeConfig and returns only the error. It exists
-// so tests that solely assert the error path don't need a three-blank
-// assignment (which dogsled forbids).
-func loadKubeConfigErr() error {
-	cfg, kc, err := loadKubeConfig()
-	_ = cfg
-	_ = kc
-
-	return err
-}
-
 // --- ListNamespaces / ListPods / ListServices / ListDeployments ---
 // --- ListNodes / ListEvents ---
 
@@ -979,69 +968,20 @@ func TestClient_ListEvents(t *testing.T) {
 	})
 }
 
-// --- loadKubeConfig (filesystem-backed) ---
+// --- kubeconfig path resolution (filesystem-backed, via NewClientManager) ---
+// resolveKubeconfigPaths' branches are only reachable through
+// NewClientManager, so these tests drive it with env vars.
 
-func TestLoadKubeConfig_HappyPath(t *testing.T) {
-	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	dir := t.TempDir()
-	path := filepath.Join(dir, ktConfigFileName)
-	mustWrite(t, path, `apiVersion: v1
-kind: Config
-current-context: my-ctx
-clusters:
-- cluster:
-    server: https://127.0.0.1:6443
-    insecure-skip-tls-verify: true
-  name: my-cluster
-contexts:
-- context:
-    cluster: my-cluster
-    user: me
-  name: my-ctx
-users:
-- name: me
-  user:
-    token: fake
-`)
-	t.Setenv(ktEnvKubeconfig, path)
-
-	cfg, kc, err := loadKubeConfig()
-	requireNoErr(t, err)
-
-	if cfg == nil {
-		t.Fatal("nil rest config")
-	}
-
-	if kc.contextName != ktCtxMy {
-		t.Fatalf("ctx = %q", kc.contextName)
-	}
-
-	if kc.clusterName != "my-cluster" {
-		t.Fatalf("cluster = %q", kc.clusterName)
-	}
-}
-
-func TestLoadKubeConfig_MissingFile(t *testing.T) {
-	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	// An explicitly configured KUBECONFIG that does not exist is a hard
-	// error (matching kubectl), never a silent in-cluster fallback.
-	t.Setenv(ktEnvKubeconfig, filepath.Join(t.TempDir(), "does-not-exist"))
-
-	if loadKubeConfigErr() == nil {
-		t.Fatal("expected error for missing kubeconfig")
-	}
-}
-
-func TestLoadKubeConfig_NoKubeconfigFallsBackToInCluster(t *testing.T) {
+func TestResolvePaths_NoKubeconfigFallsBackToInCluster(t *testing.T) {
 	// NOTE: mutates KUBECONFIG/HOME via t.Setenv; not parallel-safe.
-	// Without KUBECONFIG and without ~/.kube/config the loader must attempt
+	// Without KUBECONFIG and without ~/.kube/config the manager must attempt
 	// the in-cluster service-account config; outside a pod that attempt
 	// fails with rest.ErrNotInCluster, which identifies the code path.
 	t.Setenv(ktEnvKubeconfig, ktEmpty)
 	t.Setenv(ktEnvHome, t.TempDir())
 	t.Setenv("KUBERNETES_SERVICE_HOST", ktEmpty)
 
-	err := loadKubeConfigErr()
+	_, err := NewClientManager()
 	if !errors.Is(err, rest.ErrNotInCluster) {
 		t.Fatalf("err = %v, want rest.ErrNotInCluster", err)
 	}
@@ -1066,7 +1006,7 @@ users:
     token: fake
 `
 
-func TestLoadKubeConfig_ColonListUsesFirstReadableFile(t *testing.T) {
+func TestResolvePaths_ColonListUsesFirstReadableFile(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
 	// A colon-separated KUBECONFIG (the kubectl-standard multi-path form)
 	// must merge rather than being treated as one bogus path.
@@ -1077,15 +1017,14 @@ func TestLoadKubeConfig_ColonListUsesFirstReadableFile(t *testing.T) {
 	missing := filepath.Join(dir, "second")
 	t.Setenv(ktEnvKubeconfig, existing+string(os.PathListSeparator)+missing)
 
-	cfg, kc, err := loadKubeConfig()
+	manager, err := NewClientManager()
 	requireNoErr(t, err)
 
-	if cfg == nil {
-		t.Fatal("nil rest config")
-	}
+	client, err := manager.ClientFor(emptyString)
+	requireNoErr(t, err)
 
-	if kc.contextName != ktCtxMy {
-		t.Fatalf("ctx = %q", kc.contextName)
+	if client.context != ktCtxMy {
+		t.Fatalf("ctx = %q", client.context)
 	}
 }
 
@@ -1152,49 +1091,9 @@ func mustWrite(t *testing.T, path, body string) {
 	}
 }
 
-// --- NewClient (filesystem + config plumbing) ---
-
-func TestNewClient_FromKubeconfig(t *testing.T) {
-	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	dir := t.TempDir()
-	path := filepath.Join(dir, ktConfigFileName)
-	mustWrite(t, path, `apiVersion: v1
-kind: Config
-current-context: ctx
-clusters:
-- cluster:
-    server: https://127.0.0.1:6443
-    insecure-skip-tls-verify: true
-  name: c1
-contexts:
-- context:
-    cluster: c1
-    user: u
-  name: ctx
-users:
-- name: u
-  user:
-    token: fake
-`)
-	t.Setenv(ktEnvKubeconfig, path)
-
-	client, err := NewClient()
-	requireNoErr(t, err)
-
-	if client.context != "ctx" || client.cluster != "c1" {
-		t.Fatalf("c = %+v", client)
-	}
-
-	if client.clientset == nil || client.discovery == nil {
-		t.Fatalf("client fields nil: %+v", client)
-	}
-}
-
-// TestLoadKubeConfig_DefaultPath covers the branch where KUBECONFIG is unset
-// and loadKubeConfig falls back to ~/.kube/config. We don't expect the load
-// to succeed (the test runner's HOME might not point at a real cluster), but
-// the *path-resolution* code is exercised either way.
-func TestLoadKubeConfig_DefaultPath(t *testing.T) {
+// TestResolvePaths_DefaultPath covers the branch where KUBECONFIG is unset
+// and path resolution falls back to ~/.kube/config.
+func TestResolvePaths_DefaultPath(t *testing.T) {
 	// NOTE: mutates HOME/KUBECONFIG via t.Setenv, so this test cannot run in
 	// parallel with others that read those variables.
 	home := t.TempDir()
@@ -1221,68 +1120,29 @@ users:
 	t.Setenv(ktEnvKubeconfig, ktEmpty)
 	t.Setenv(ktEnvHome, home)
 
-	_, kc, err := loadKubeConfig()
+	manager, err := NewClientManager()
 	requireNoErr(t, err)
 
-	if kc.contextName != "c" || kc.clusterName != "cl" {
-		t.Fatalf("ctx=%q cluster=%q", kc.contextName, kc.clusterName)
+	client, err := manager.ClientFor(emptyString)
+	requireNoErr(t, err)
+
+	if client.context != "c" || client.cluster != "cl" {
+		t.Fatalf("ctx=%q cluster=%q", client.context, client.cluster)
 	}
 }
 
-// TestLoadKubeConfig_HomeUnset covers the branch where KUBECONFIG is unset
-// *and* HOME is unset — kubeconfigPath stays empty and clientcmd produces a
-// build-rest-config error.
-func TestLoadKubeConfig_HomeUnset(t *testing.T) {
+// TestResolvePaths_HomeUnset covers the branch where KUBECONFIG is unset
+// *and* HOME is unset — no kubeconfig path resolves, so the manager falls
+// back to (and fails) in-cluster config outside a pod.
+func TestResolvePaths_HomeUnset(t *testing.T) {
 	// NOTE: mutates HOME/KUBECONFIG via t.Setenv; not parallel-safe.
 	t.Setenv(ktEnvKubeconfig, ktEmpty)
 	t.Setenv(ktEnvHome, ktEmpty)
+	t.Setenv("KUBERNETES_SERVICE_HOST", ktEmpty)
 
-	if loadKubeConfigErr() == nil {
+	_, err := NewClientManager()
+	if err == nil {
 		t.Fatal("expected error when neither KUBECONFIG nor HOME is set")
-	}
-}
-
-func TestNewClient_BadKubeconfig(t *testing.T) {
-	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	dir := t.TempDir()
-	path := filepath.Join(dir, ktConfigFileName)
-	mustWrite(t, path, "this is not yaml: [[[")
-	t.Setenv(ktEnvKubeconfig, path)
-
-	_, err := NewClient()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-// TestNewClient_InvalidServerURLBreaksClientsetBuild covers the rare
-// kubernetes.NewForConfig error path. We craft a kubeconfig whose server is
-// not a parseable URL — clientcmd's ClientConfig() builds the *rest.Config
-// successfully, then kubernetes.NewForConfig fails when it tries to derive
-// the server URL.
-func TestNewClient_InvalidServerURLBreaksClientsetBuild(t *testing.T) {
-	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	dir := t.TempDir()
-	path := filepath.Join(dir, ktConfigFileName)
-	mustWrite(t, path, `apiVersion: v1
-kind: Config
-current-context: c
-clusters:
-- cluster:
-    server: "://not-a-url"
-  name: cl
-contexts:
-- context: {cluster: cl, user: u}
-  name: c
-users:
-- name: u
-  user: {token: fake}
-`)
-	t.Setenv(ktEnvKubeconfig, path)
-
-	_, err := NewClient()
-	if err == nil {
-		t.Fatal("expected error from clientset build with invalid server URL")
 	}
 }
 

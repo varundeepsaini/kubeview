@@ -108,8 +108,8 @@ func TestServe_ListenError(t *testing.T) {
 	<-occupierDone
 }
 
-// TestRun_PropagatesClientError exercises run()'s error-from-NewClient path
-// by pointing KUBECONFIG at a malformed file.
+// TestRun_PropagatesClientError exercises run()'s error-from-NewClientManager
+// path by pointing KUBECONFIG at a malformed file.
 //
 // It is not parallel: t.Setenv mutates process-global environment and the Go
 // test runtime forbids combining t.Setenv with t.Parallel.
@@ -126,15 +126,15 @@ func TestRun_PropagatesClientError(t *testing.T) {
 
 	runErr := run()
 	if runErr == nil {
-		t.Fatal("expected NewClient error to propagate")
+		t.Fatal("expected NewClientManager error to propagate")
 	}
 }
 
 // TestRun_DefaultsPortWhenUnset triggers run() with PORT unset to cover the
-// `port = defaultPort` branch. We expect NewClient to fail (with whatever
-// kubeconfig the test env has, the address bind will not even happen if
-// NewClient errors first; we just need *some* error to bail run() before
-// it blocks).
+// `port = defaultPort` branch. We expect NewClientManager to fail (with
+// whatever kubeconfig the test env has, the address bind will not even happen
+// if NewClientManager errors first; we just need *some* error to bail run()
+// before it blocks).
 //
 // It is not parallel: t.Setenv mutates process-global environment and the Go
 // test runtime forbids combining t.Setenv with t.Parallel.
@@ -145,7 +145,7 @@ func TestRun_DefaultsPortWhenUnset(t *testing.T) {
 
 	runErr := run()
 	if runErr == nil {
-		t.Fatal("expected run() to bail on NewClient error")
+		t.Fatal("expected run() to bail on NewClientManager error")
 	}
 }
 

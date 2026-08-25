@@ -22,7 +22,14 @@ function readSaved(): string {
   if (typeof window === "undefined") {
     return "";
   }
-  return localStorage.getItem(STORAGE_KEY) ?? "";
+  // Merely touching localStorage throws SecurityError when storage is blocked
+  // (cookies disabled, some private modes, partitioned iframes); that must not
+  // crash the render of the provider wrapping the whole app.
+  try {
+    return localStorage.getItem(STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
 }
 
 export function ClusterProvider({ children }: { children: React.ReactNode }) {
@@ -34,10 +41,16 @@ export function ClusterProvider({ children }: { children: React.ReactNode }) {
 
   const setContext = (name: string) => {
     setApiContext(name);
-    if (name) {
-      localStorage.setItem(STORAGE_KEY, name);
-    } else {
-      localStorage.removeItem(STORAGE_KEY);
+    // With storage blocked the switch still works for this session; it is
+    // just not persisted across reloads.
+    try {
+      if (name) {
+        localStorage.setItem(STORAGE_KEY, name);
+      } else {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    } catch {
+      // ignore: storage unavailable
     }
     setContextState(name);
   };

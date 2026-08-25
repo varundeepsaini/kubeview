@@ -66,27 +66,9 @@ type NodeInfo struct {
 	Addresses        []NodeAddress     `json:"addresses"`
 }
 
-func NewClient() (*Client, error) {
-	config, kubeCtx, err := loadKubeConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("create clientset: %w", err)
-	}
-
-	return &Client{
-		clientset: clientset,
-		discovery: clientset.Discovery(),
-		context:   kubeCtx.contextName,
-		cluster:   kubeCtx.clusterName,
-	}, nil
-}
-
-// kubeContext bundles the current context and cluster names so loadKubeConfig
-// returns a single distinct type instead of two same-typed string results.
+// kubeContext bundles the current context and cluster names so
+// loadInClusterConfig returns a single distinct type instead of two
+// same-typed string results.
 type kubeContext struct {
 	contextName string
 	clusterName string
@@ -159,43 +141,6 @@ func loadingRulesFor(paths []string) *clientcmd.ClientConfigLoadingRules {
 	rules.Precedence = paths
 
 	return rules
-}
-
-func loadKubeConfig() (*rest.Config, kubeContext, error) {
-	var emptyCtx kubeContext
-
-	paths, useInCluster := resolveKubeconfigPaths()
-	if useInCluster {
-		return loadInClusterConfig()
-	}
-
-	loadingRules := loadingRulesFor(paths)
-	overrides := new(clientcmd.ConfigOverrides)
-	kubeConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		loadingRules,
-		overrides,
-	)
-
-	rawConfig, err := kubeConfig.RawConfig()
-	if err != nil {
-		err = fmt.Errorf("load kubeconfig: %w", err)
-
-		return nil, emptyCtx, err
-	}
-
-	restConfig, err := kubeConfig.ClientConfig()
-	if err != nil {
-		err = fmt.Errorf("build rest config: %w", err)
-
-		return nil, emptyCtx, err
-	}
-
-	ctxName := rawConfig.CurrentContext
-
-	return restConfig, kubeContext{
-		contextName: ctxName,
-		clusterName: clusterNameFor(rawConfig, ctxName),
-	}, nil
 }
 
 // clusterNameFor resolves the cluster bound to the current context, defaulting

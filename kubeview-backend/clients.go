@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -16,6 +17,31 @@ import (
 // not present in the loaded kubeconfig. Handlers map it to HTTP 400 so a bad
 // ?context= value is a client error, not a server error.
 var errUnknownContext = errors.New("unknown context")
+
+// Startup-time kubeconfig problems get their own errors instead of
+// errUnknownContext, which describes bad ?context= request values and would
+// misread as "unknown context: \"\"" when current-context is simply unset.
+var (
+	errNoContexts = errors.New(
+		"kubeconfig defines no contexts (is KUBECONFIG pointing at an existing file?)",
+	)
+	errNoCurrentContext = errors.New(
+		"kubeconfig has no current-context set",
+	)
+	errBadCurrentContext = errors.New(
+		"kubeconfig current-context does not exist",
+	)
+)
+
+// clientRequestTimeout bounds each API request a client makes, in both
+// kubeconfig and in-cluster modes, covering the whole exchange including the
+// response body read. Rest configs default to no client timeout, so without
+// this a context whose API server is unreachable (e.g. a VPN-only cluster)
+// would hang every request until the server's write timeout severed the
+// connection instead of returning an error response. It sits just under
+// main.go's 60s writeTimeout so slow-but-legitimate requests (pod-log tails,
+// large list responses) keep nearly the full budget that timeout allocates.
+const clientRequestTimeout = 55 * time.Second
 
 // ContextInfo describes one kubeconfig context for the frontend dropdown. JSON
 // tags must match what the frontend expects in
@@ -73,6 +99,11 @@ func NewClientManager() (*ClientManager, error) {
 		return buildClientForContext(loadingRules, rawConfig, name)
 	}
 
+	err = validateDefaultContext(manager)
+	if err != nil {
+		return nil, err
+	}
+
 	// Eagerly build the default context so a malformed current context is
 	// caught at startup rather than on the first request.
 	_, err = manager.ClientFor(emptyString)
@@ -83,6 +114,26 @@ func NewClientManager() (*ClientManager, error) {
 	return manager, nil
 }
 
+// validateDefaultContext checks at startup that the kubeconfig actually has
+// contexts and that current-context names one of them, so an unset or dangling
+// current-context (or an empty config from a missing KUBECONFIG file) fails
+// with a message describing the config problem.
+func validateDefaultContext(m *ClientManager) error {
+	if len(m.contexts) == zeroCount {
+		return errNoContexts
+	}
+
+	if m.defaultContext == emptyString {
+		return errNoCurrentContext
+	}
+
+	if !m.hasContext(m.defaultContext) {
+		return fmt.Errorf("%w: %q", errBadCurrentContext, m.defaultContext)
+	}
+
+	return nil
+}
+
 // newInClusterManager wraps a single in-cluster client as a manager with one
 // implicit context. There is nothing to switch to, so ?context= is effectively
 // ignored (any other name is rejected as unknown).
@@ -91,6 +142,8 @@ func newInClusterManager() (*ClientManager, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	config.Timeout = clientRequestTimeout
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -196,6 +249,8 @@ func buildClientForContext(
 	if err != nil {
 		return nil, fmt.Errorf("rest config for context %q: %w", name, err)
 	}
+
+	restConfig.Timeout = clientRequestTimeout
 
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
