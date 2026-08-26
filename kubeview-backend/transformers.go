@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -123,6 +125,106 @@ type Service struct {
 	CreatedAt  string            `json:"createdAt"`
 	Age        string            `json:"age"`
 	Ports      []string          `json:"ports"`
+}
+
+type ConfigMap struct {
+	Name      string            `json:"name"`
+	Namespace string            `json:"namespace"`
+	Keys      []string          `json:"keys"`
+	Labels    map[string]string `json:"labels"`
+	Age       string            `json:"age"`
+}
+type Secret struct {
+	Name        string         `json:"name"`
+	Namespace   string         `json:"namespace"`
+	Type        string         `json:"type"`
+	DataLengths map[string]int `json:"dataLengths"`
+	Age         string         `json:"age"`
+}
+type IngressRule struct {
+	Host    string `json:"host"`
+	Path    string `json:"path"`
+	Service string `json:"service"`
+	Port    string `json:"port"`
+}
+type Ingress struct {
+	Name      string        `json:"name"`
+	Namespace string        `json:"namespace"`
+	Class     string        `json:"class"`
+	Rules     []IngressRule `json:"rules"`
+	Addresses []string      `json:"addresses"`
+	Age       string        `json:"age"`
+}
+type StatefulSet struct {
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace"`
+	ServiceName     string `json:"serviceName"`
+	Replicas        int32  `json:"replicas"`
+	ReadyReplicas   int32  `json:"readyReplicas"`
+	CurrentReplicas int32  `json:"currentReplicas"`
+	UpdatedReplicas int32  `json:"updatedReplicas"`
+	Strategy        string `json:"strategy"`
+	Age             string `json:"age"`
+}
+type DaemonSet struct {
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Desired   int32  `json:"desired"`
+	Current   int32  `json:"current"`
+	Ready     int32  `json:"ready"`
+	Updated   int32  `json:"updated"`
+	Available int32  `json:"available"`
+	Age       string `json:"age"`
+}
+
+func transformConfigMap(item corev1.ConfigMap) ConfigMap {
+	keys := make([]string, 0, len(item.Data)+len(item.BinaryData))
+	for key := range item.Data {
+		keys = append(keys, key)
+	}
+	for key := range item.BinaryData {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return ConfigMap{Name: item.Name, Namespace: item.Namespace, Keys: keys, Labels: emptyIfNil(item.Labels), Age: getAge(item.CreationTimestamp)}
+}
+func transformSecret(item corev1.Secret) Secret {
+	lengths := make(map[string]int, len(item.Data))
+	for key, value := range item.Data {
+		lengths[key] = len(value)
+	}
+	return Secret{Name: item.Name, Namespace: item.Namespace, Type: string(item.Type), DataLengths: lengths, Age: getAge(item.CreationTimestamp)}
+}
+func transformIngress(item networkingv1.Ingress) Ingress {
+	class := "<none>"
+	if item.Spec.IngressClassName != nil {
+		class = *item.Spec.IngressClassName
+	}
+	rules := []IngressRule{}
+	for _, rule := range item.Spec.Rules {
+		for _, path := range rule.HTTP.Paths {
+			port := path.Backend.Service.Port.Name
+			if port == "" {
+				port = fmt.Sprint(path.Backend.Service.Port.Number)
+			}
+			rules = append(rules, IngressRule{Host: rule.Host, Path: path.Path, Service: path.Backend.Service.Name, Port: port})
+		}
+	}
+	addresses := []string{}
+	for _, ingress := range item.Status.LoadBalancer.Ingress {
+		if ingress.IP != "" {
+			addresses = append(addresses, ingress.IP)
+		} else if ingress.Hostname != "" {
+			addresses = append(addresses, ingress.Hostname)
+		}
+	}
+	return Ingress{Name: item.Name, Namespace: item.Namespace, Class: class, Rules: rules, Addresses: addresses, Age: getAge(item.CreationTimestamp)}
+}
+func transformStatefulSet(item appsv1.StatefulSet) StatefulSet {
+	return StatefulSet{Name: item.Name, Namespace: item.Namespace, ServiceName: item.Spec.ServiceName, Replicas: item.Status.Replicas, ReadyReplicas: item.Status.ReadyReplicas, CurrentReplicas: item.Status.CurrentReplicas, UpdatedReplicas: item.Status.UpdatedReplicas, Strategy: string(item.Spec.UpdateStrategy.Type), Age: getAge(item.CreationTimestamp)}
+}
+func transformDaemonSet(item appsv1.DaemonSet) DaemonSet {
+	return DaemonSet{Name: item.Name, Namespace: item.Namespace, Desired: item.Status.DesiredNumberScheduled, Current: item.Status.CurrentNumberScheduled, Ready: item.Status.NumberReady, Updated: item.Status.UpdatedNumberScheduled, Available: item.Status.NumberAvailable, Age: getAge(item.CreationTimestamp)}
 }
 
 // --- helpers ---

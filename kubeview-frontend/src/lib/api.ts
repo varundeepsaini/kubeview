@@ -158,6 +158,13 @@ export interface KubeEvent {
   source: string;
 }
 
+export interface ConfigMap { name: string; namespace: string; keys: string[]; labels: Record<string,string>; age: string }
+export interface Secret { name: string; namespace: string; type: string; dataLengths: Record<string,number>; age: string }
+export interface IngressRule { host: string; path: string; service: string; port: string }
+export interface Ingress { name: string; namespace: string; class: string; rules: IngressRule[]; addresses: string[]; age: string }
+export interface StatefulSet { name: string; namespace: string; serviceName: string; replicas: number; readyReplicas: number; currentReplicas: number; updatedReplicas: number; strategy: string; age: string }
+export interface DaemonSet { name: string; namespace: string; desired: number; current: number; ready: number; updated: number; available: number; age: string }
+
 export const api = {
   getContexts: () => fetchApi<ContextInfo[]>("/contexts"),
   getCluster: () => fetchApi<ClusterInfo>("/cluster"),
@@ -175,6 +182,12 @@ export const api = {
   getNodes: () => fetchApi<NodeInfo[]>("/nodes"),
   getEvents: (ns?: string) =>
     fetchApi<KubeEvent[]>(ns ? `/events?namespace=${ns}` : "/events"),
+  getConfigMaps: (ns?: string) => fetchApi<ConfigMap[]>(ns ? `/configmaps?namespace=${encodeURIComponent(ns)}` : "/configmaps"),
+  getSecrets: (ns?: string) => fetchApi<Secret[]>(ns ? `/secrets?namespace=${encodeURIComponent(ns)}` : "/secrets"),
+  getSecret: (ns: string, name: string) => fetchApi<{ values: Record<string,string> }>(`/secrets/${encodeURIComponent(ns)}/${encodeURIComponent(name)}`),
+  getIngresses: (ns?: string) => fetchApi<Ingress[]>(ns ? `/ingresses?namespace=${encodeURIComponent(ns)}` : "/ingresses"),
+  getStatefulSets: (ns?: string) => fetchApi<StatefulSet[]>(ns ? `/statefulsets?namespace=${encodeURIComponent(ns)}` : "/statefulsets"),
+  getDaemonSets: (ns?: string) => fetchApi<DaemonSet[]>(ns ? `/daemonsets?namespace=${encodeURIComponent(ns)}` : "/daemonsets"),
 };
 
 // eventSourceUrl carries the active context like fetchApi does: watch and

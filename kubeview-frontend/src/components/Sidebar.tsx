@@ -11,6 +11,11 @@ const nav = [
   { href: "/pods", label: "Pods", icon: "box" },
   { href: "/deployments", label: "Deployments", icon: "layers" },
   { href: "/services", label: "Services", icon: "globe" },
+  { href: "/configmaps", label: "ConfigMaps", icon: "folder" },
+  { href: "/secrets", label: "Secrets", icon: "lock" },
+  { href: "/ingresses", label: "Ingresses", icon: "globe" },
+  { href: "/statefulsets", label: "StatefulSets", icon: "layers" },
+  { href: "/daemonsets", label: "DaemonSets", icon: "server" },
   { href: "/events", label: "Events", icon: "bell" },
   { href: "/nodes", label: "Nodes", icon: "server" },
 ];
@@ -51,6 +56,11 @@ const icons: Record<string, React.ReactNode> = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
     </svg>
   ),
+  lock: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75m-.75 0h10.5A2.25 2.25 0 0119.5 12.75v6A2.25 2.25 0 0117.25 21H6.75a2.25 2.25 0 01-2.25-2.25v-6a2.25 2.25 0 012.25-2.25z" />
+    </svg>
+  ),
 };
 
 export default function Sidebar() {
@@ -65,7 +75,7 @@ export default function Sidebar() {
         <p className="text-xs text-muted mt-1">Cluster Management</p>
         <ContextSwitcher />
       </div>
-      <nav className="flex-1 p-3 space-y-1">
+      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {nav.map((item) => {
           const active = pathname === item.href;
           return (

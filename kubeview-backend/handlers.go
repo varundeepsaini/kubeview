@@ -166,8 +166,9 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 
 func newRouter(manager *ClientManager) *http.ServeMux {
 	const (
-		podDetailRoute = "GET /api/pods/{namespace}/{name}"
-		podLogsRoute   = "GET /api/pods/{namespace}/{name}/logs"
+		podDetailRoute    = "GET /api/pods/{namespace}/{name}"
+		podLogsRoute      = "GET /api/pods/{namespace}/{name}/logs"
+		secretDetailRoute = "GET /api/secrets/{namespace}/{name}"
 	)
 
 	// wrap binds a resource handler to the manager so per-request client
@@ -188,6 +189,12 @@ func newRouter(manager *ClientManager) *http.ServeMux {
 	mux.HandleFunc("GET /api/services", wrap(handleServices))
 	mux.HandleFunc("GET /api/nodes", wrap(handleNodes))
 	mux.HandleFunc("GET /api/events", wrap(handleEvents))
+	mux.HandleFunc("GET /api/configmaps", wrap(handleConfigMaps))
+	mux.HandleFunc("GET /api/secrets", wrap(handleSecrets))
+	mux.HandleFunc(secretDetailRoute, wrap(handleSecret))
+	mux.HandleFunc("GET /api/ingresses", wrap(handleIngresses))
+	mux.HandleFunc("GET /api/statefulsets", wrap(handleStatefulSets))
+	mux.HandleFunc("GET /api/daemonsets", wrap(handleDaemonSets))
 	mux.HandleFunc("GET /api/watch", wrap(
 		func(client *Client, writer http.ResponseWriter, req *http.Request) {
 			handleWatch(client)(writer, req)
@@ -933,6 +940,150 @@ func handleEvents(
 	out := make([]KubeEvent, emptyCount, len(items))
 	for _, event := range items {
 		out = append(out, transformEvent(event))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
+}
+
+func handleConfigMaps(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
+
+	items, err := client.ListConfigMaps(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
+
+		return
+	}
+
+	out := make([]ConfigMap, emptyCount, len(items))
+	for _, item := range items {
+		out = append(out, transformConfigMap(item))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
+}
+
+func handleSecrets(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
+
+	items, err := client.ListSecrets(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
+
+		return
+	}
+
+	out := make([]Secret, emptyCount, len(items))
+	for _, item := range items {
+		out = append(out, transformSecret(item))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
+}
+
+func handleSecret(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	item, err := client.GetSecret(
+		req.Context(),
+		req.PathValue(paramNamespace),
+		req.PathValue(paramName),
+	)
+	if err != nil {
+		if isNotFound(err) {
+			writeJSONError(writer, http.StatusNotFound, "Secret not found")
+
+			return
+		}
+
+		writeError(writer, err)
+
+		return
+	}
+
+	values := make(map[string]string, len(item.Data))
+	for key, value := range item.Data {
+		values[key] = string(value)
+	}
+
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"name":      item.Name,
+		"namespace": item.Namespace,
+		"values":    values,
+	})
+}
+
+func handleIngresses(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
+
+	items, err := client.ListIngresses(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
+
+		return
+	}
+
+	out := make([]Ingress, emptyCount, len(items))
+	for _, item := range items {
+		out = append(out, transformIngress(item))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
+}
+
+func handleStatefulSets(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
+
+	items, err := client.ListStatefulSets(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
+
+		return
+	}
+
+	out := make([]StatefulSet, emptyCount, len(items))
+	for _, item := range items {
+		out = append(out, transformStatefulSet(item))
+	}
+
+	writeJSON(writer, http.StatusOK, out)
+}
+
+func handleDaemonSets(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	namespace := req.URL.Query().Get(paramNamespace)
+
+	items, err := client.ListDaemonSets(req.Context(), namespace)
+	if err != nil {
+		writeError(writer, err)
+
+		return
+	}
+
+	out := make([]DaemonSet, emptyCount, len(items))
+	for _, item := range items {
+		out = append(out, transformDaemonSet(item))
 	}
 
 	writeJSON(writer, http.StatusOK, out)
