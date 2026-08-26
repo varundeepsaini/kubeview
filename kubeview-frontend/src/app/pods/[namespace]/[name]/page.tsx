@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useState, use } from "react";
-import { api, Pod } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState, use } from "react";
+import { api, Pod, podLogStreamUrl } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -14,20 +14,22 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
   const [selectedContainer, setSelectedContainer] = useState<string>("");
   const [logs, setLogs] = useState<string>("");
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsPaused, setLogsPaused] = useState(false);
+  const logSource = useRef<EventSource | null>(null);
 
   const fetcher = useCallback(() => api.getPod(namespace, name), [namespace, name]);
   const { data: pod, error, loading, refresh } = usePolling<Pod>(fetcher);
 
-  const fetchLogs = async (container?: string) => {
-    setLogsLoading(true);
-    try {
-      const res = await api.getPodLogs(namespace, name, container || undefined);
-      setLogs(res.logs);
-    } catch (err) {
-      setLogs(err instanceof Error ? `Error: ${err.message}` : "Failed to fetch logs");
-    }
-    setLogsLoading(false);
-  };
+  const stopLogs = useCallback(() => { logSource.current?.close(); logSource.current = null; }, []);
+  const streamLogs = useCallback((container?: string) => {
+    stopLogs(); setLogs(""); setLogsLoading(true); setLogsPaused(false);
+    const source = new EventSource(podLogStreamUrl(namespace, name, container));
+    logSource.current = source;
+    source.addEventListener("log", (event) => { setLogs(current => current + JSON.parse((event as MessageEvent).data) + "\n"); setLogsLoading(false); });
+    source.onopen = () => setLogsLoading(false);
+    source.onerror = () => setLogsLoading(false);
+  }, [name, namespace, stopLogs]);
+  useEffect(() => stopLogs, [stopLogs]);
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error} onRetry={refresh} />;
@@ -66,7 +68,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
             key={tab}
             onClick={() => {
               setActiveTab(tab);
-              if (tab === "logs" && !logs) fetchLogs(activeContainer);
+              if (tab === "logs" && !logs) streamLogs(activeContainer);
             }}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
@@ -187,7 +189,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   value={activeContainer}
                   onChange={(e) => {
                     setSelectedContainer(e.target.value);
-                    fetchLogs(e.target.value);
+                    streamLogs(e.target.value);
                   }}
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
@@ -199,10 +201,10 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                 </select>
               )}
               <button
-                onClick={() => fetchLogs(activeContainer)}
+                onClick={() => { if (logsPaused) streamLogs(activeContainer); else { stopLogs(); setLogsPaused(true); } }}
                 className="px-3 py-1.5 bg-accent/10 text-accent rounded-lg text-xs hover:bg-accent/20 transition-colors"
               >
-                Refresh
+                {logsPaused ? "Resume" : "Pause"}
               </button>
             </div>
           </div>

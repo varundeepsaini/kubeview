@@ -4,8 +4,12 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"slices"
@@ -13,7 +17,11 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // frontendOrigin is the dev-server default, used when CORS_ORIGIN is unset.
@@ -156,6 +164,11 @@ func newRouter(manager *ClientManager) *http.ServeMux {
 	mux.HandleFunc("GET /api/services", wrap(handleServices))
 	mux.HandleFunc("GET /api/nodes", wrap(handleNodes))
 	mux.HandleFunc("GET /api/events", wrap(handleEvents))
+	mux.HandleFunc("GET /api/watch", wrap(
+		func(client *Client, writer http.ResponseWriter, req *http.Request) {
+			handleWatch(client)(writer, req)
+		},
+	))
 
 	return mux
 }
@@ -298,6 +311,12 @@ func handlePodLogs(
 	query := req.URL.Query()
 	tailLines := parseTailLines(query.Get("tailLines"))
 
+	if query.Get("follow") == "true" {
+		handlePodLogStream(client, writer, req, tailLines)
+
+		return
+	}
+
 	logs, err := client.GetPodLogs(
 		req.Context(),
 		req.PathValue(paramNamespace),
@@ -318,6 +337,151 @@ func handlePodLogs(
 	}
 
 	writeJSON(writer, http.StatusOK, map[string]string{"logs": logs})
+}
+
+func handlePodLogStream(client *Client, writer http.ResponseWriter, req *http.Request, tailLines int64) {
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		writeJSONError(writer, http.StatusInternalServerError, "Streaming unavailable")
+		return
+	}
+	stream, err := client.StreamPodLogs(req.Context(), req.PathValue(paramNamespace), req.PathValue(paramName), req.URL.Query().Get(paramContainer), tailLines)
+	if err != nil {
+		writeError(writer, err)
+		return
+	}
+	defer closeLogStream(stream)
+	setSSEHeaders(writer)
+	scanner := bufio.NewScanner(stream)
+	for scanner.Scan() {
+		if err := writeSSE(writer, "log", scanner.Text()); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+}
+
+type watchMessage struct {
+	Type     string `json:"type"`
+	Resource string `json:"resource"`
+	Key      string `json:"key"`
+	Object   any    `json:"object,omitempty"`
+}
+type resourceEvent struct {
+	resource string
+	event    watch.Event
+}
+
+func handleWatch(client *Client) http.HandlerFunc {
+	return func(writer http.ResponseWriter, req *http.Request) {
+		flusher, ok := writer.(http.Flusher)
+		if !ok {
+			writeJSONError(writer, http.StatusInternalServerError, "Streaming unavailable")
+			return
+		}
+		resources := strings.Split(req.URL.Query().Get("resources"), ",")
+		if len(resources) == 0 || resources[0] == "" {
+			writeJSONError(writer, http.StatusBadRequest, "resources is required")
+			return
+		}
+		ctx, cancel := context.WithCancel(req.Context())
+		defer cancel()
+		events := make(chan resourceEvent)
+		watchers := make([]watch.Interface, 0, len(resources))
+		for _, resource := range resources {
+			resource = strings.TrimSpace(resource)
+			stream, err := client.WatchResource(ctx, resource, req.URL.Query().Get(paramNamespace))
+			if err != nil {
+				writeJSONError(writer, http.StatusBadRequest, err.Error())
+				return
+			}
+			watchers = append(watchers, stream)
+			go forwardWatch(ctx, resource, stream, events)
+		}
+		defer func() {
+			for _, stream := range watchers {
+				stream.Stop()
+			}
+		}()
+		setSSEHeaders(writer)
+		_ = writeSSE(writer, "ready", map[string]any{"resources": resources})
+		flusher.Flush()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case item := <-events:
+				message := transformWatchEvent(item.resource, item.event)
+				if err := writeSSE(writer, "resource", message); err != nil {
+					return
+				}
+				flusher.Flush()
+				if item.event.Type == watch.Error {
+					return
+				}
+			}
+		}
+	}
+}
+
+func forwardWatch(ctx context.Context, resource string, stream watch.Interface, out chan<- resourceEvent) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-stream.ResultChan():
+			if !ok {
+				select {
+				case out <- resourceEvent{resource: resource, event: watch.Event{Type: watch.Error}}:
+				case <-ctx.Done():
+				}
+				return
+			}
+			select {
+			case out <- resourceEvent{resource: resource, event: event}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+
+func transformWatchEvent(resource string, event watch.Event) watchMessage {
+	message := watchMessage{Type: strings.ToLower(string(event.Type)), Resource: resource}
+	meta, ok := event.Object.(metav1.Object)
+	if ok {
+		message.Key = meta.GetNamespace() + "/" + meta.GetName()
+	}
+	switch object := event.Object.(type) {
+	case *corev1.Pod:
+		message.Object = transformPod(object)
+	case *appsv1.Deployment:
+		message.Object = transformDeployment(*object)
+	case *corev1.Service:
+		message.Object = transformService(*object)
+	case *corev1.Node:
+		message.Object = transformNode(*object)
+	case *corev1.Namespace:
+		message.Object = transformNamespace(*object)
+	case *corev1.Event:
+		message.Object = transformEvent(*object)
+	}
+	return message
+}
+
+func setSSEHeaders(writer http.ResponseWriter) {
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.Header().Set("Connection", "keep-alive")
+	writer.Header().Set("X-Accel-Buffering", "no")
+}
+func writeSSE(writer io.Writer, event string, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, raw)
+	return err
 }
 
 // parseTailLines resolves the requested log tail length, falling back to a

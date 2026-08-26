@@ -1,6 +1,6 @@
 // Build-time override for non-local deployments; falls back to the dev
 // backend. NEXT_PUBLIC_ vars are inlined by Next.js at build time.
-const API_BASE =
+export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:5501/api";
 
 // currentContext is the ambient kubeconfig context appended to every request as
@@ -146,6 +146,7 @@ export interface NodeInfo {
 }
 
 export interface KubeEvent {
+  name: string;
   type: string;
   reason: string;
   message: string;
@@ -175,3 +176,13 @@ export const api = {
   getEvents: (ns?: string) =>
     fetchApi<KubeEvent[]>(ns ? `/events?namespace=${ns}` : "/events"),
 };
+
+export function eventSourceUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
+
+export function podLogStreamUrl(namespace: string, name: string, container?: string): string {
+  const params = new URLSearchParams({ follow: "true", tailLines: "100" });
+  if (container) params.set("container", container);
+  return eventSourceUrl(`/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/logs?${params}`);
+}

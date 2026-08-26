@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { api, Deployment } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useWatchList } from "@/lib/hooks";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -12,7 +12,7 @@ export default function DeploymentsPage() {
   const [namespace, setNamespace] = useState("");
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getDeployments(namespace || undefined), [namespace]);
-  const { data, error, loading, refresh } = usePolling<Deployment[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "deployments", namespace || undefined);
 
   const filtered = useMemo(() => {
     if (!data) return [];

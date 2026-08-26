@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { api, KubeEvent } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useWatchList } from "@/lib/hooks";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -40,7 +40,7 @@ export default function EventsPage() {
   const [namespace, setNamespace] = useState("");
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getEvents(namespace || undefined), [namespace]);
-  const { data, error, loading, refresh } = usePolling<KubeEvent[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "events", namespace || undefined);
 
   const sortedAndFiltered = useMemo(() => {
     if (!data) return [];

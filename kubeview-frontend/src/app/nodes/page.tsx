@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback } from "react";
-import { api, NodeInfo } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useWatchList } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 
 export default function NodesPage() {
   const fetcher = useCallback(() => api.getNodes(), []);
-  const { data, error, loading, refresh } = usePolling<NodeInfo[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "nodes");
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error} onRetry={refresh} />;

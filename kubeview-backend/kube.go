@@ -14,6 +14,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -262,6 +263,43 @@ func (c *Client) GetPodLogs(
 	}
 
 	return string(raw), nil
+}
+
+func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container string, tailLines int64) (io.ReadCloser, error) {
+	if container == emptyKubePath {
+		pod, err := c.GetPod(ctx, namespace, name)
+		if err != nil {
+			return nil, err
+		}
+		container = defaultLogContainer(pod)
+	}
+	opts := podLogOptions(tailLines, container)
+	opts.Follow = true
+	stream, err := c.clientset.CoreV1().Pods(namespace).GetLogs(name, opts).Stream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open log stream: %w", err)
+	}
+	return stream, nil
+}
+
+func (c *Client) WatchResource(ctx context.Context, resource, namespace string) (watch.Interface, error) {
+	options := listOptions()
+	switch resource {
+	case "pods":
+		return c.clientset.CoreV1().Pods(namespace).Watch(ctx, options)
+	case "deployments":
+		return c.clientset.AppsV1().Deployments(namespace).Watch(ctx, options)
+	case "services":
+		return c.clientset.CoreV1().Services(namespace).Watch(ctx, options)
+	case "nodes":
+		return c.clientset.CoreV1().Nodes().Watch(ctx, options)
+	case "namespaces":
+		return c.clientset.CoreV1().Namespaces().Watch(ctx, options)
+	case "events":
+		return c.clientset.CoreV1().Events(namespace).Watch(ctx, options)
+	default:
+		return nil, fmt.Errorf("unsupported watch resource %q", resource)
+	}
 }
 
 // defaultLogContainer picks the container a log request should target when

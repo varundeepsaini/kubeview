@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { api, Namespace } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useWatchList } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -11,7 +11,7 @@ import ErrorMessage from "@/components/ErrorMessage";
 export default function NamespacesPage() {
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getNamespaces(), []);
-  const { data, error, loading, refresh } = usePolling<Namespace[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "namespaces");
 
   const filtered = useMemo(() => {
     if (!data) return [];
