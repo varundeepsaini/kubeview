@@ -29,6 +29,7 @@ const (
 	htStatusOK     = http.StatusOK
 	htStatusForbid = http.StatusForbidden
 	htStatusNotF   = http.StatusNotFound
+	htStatusBadReq = http.StatusBadRequest
 	htStatusErr    = http.StatusInternalServerError
 
 	htRedirectFloor = 300
@@ -77,6 +78,7 @@ const (
 	htPathServices    = "/api/services"
 	htPathNodes       = "/api/nodes"
 	htPathEvents      = "/api/events"
+	htPathContexts    = "/api/contexts"
 	htPathPodDetail   = "/api/pods/default/web"
 	htPathPDetail     = "/api/pods/default/p"
 	htPathWebLogs     = "/api/pods/default/web/logs"
@@ -128,6 +130,9 @@ const (
 	htVerbList = "list"
 	htSubLog   = "log"
 
+	htCtxOther     = "other-context"
+	htQueryContext = "?context="
+
 	htEmpty       = ""
 	htLogsHello   = "hello"
 	htLogsOK      = "ok"
@@ -177,10 +182,26 @@ func newTestServer(
 	t.Helper()
 
 	c, _ := newTestClient(t, sv, objs...)
-	srv := httptest.NewServer(withCORS(newRouter(c), parseCORSOrigins(htEmpty)))
+	router := newRouter(managerForClient(c))
+	srv := httptest.NewServer(withCORS(router, parseCORSOrigins(htEmpty)))
 	t.Cleanup(srv.Close)
 
 	return srv, c
+}
+
+// managerForClient wraps an already-built *Client as a single-context manager,
+// so router tests exercise the real withClient path without a kubeconfig. The
+// client is pre-cached under the default context, so the (nil) build func is
+// never called.
+func managerForClient(c *Client) *ClientManager {
+	manager := new(ClientManager)
+	manager.clients = map[string]*Client{ktContextName: c}
+	manager.contexts = []ContextInfo{
+		{Name: ktContextName, Cluster: ktClusterName, Current: true},
+	}
+	manager.defaultContext = ktContextName
+
+	return manager
 }
 
 // doRequest issues a request with the given method, reads and closes the body,
@@ -330,6 +351,94 @@ func TestHandle_Health(t *testing.T) {
 	_, err := time.Parse(time.RFC3339, out["timestamp"])
 	if err != nil {
 		t.Fatalf("timestamp not RFC3339: %q (%v)", out["timestamp"], err)
+	}
+}
+
+// --- /api/contexts ---
+
+func TestHandle_Contexts(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, nil)
+
+	var out []ContextInfo
+
+	res := getJSON(t, srv, htPathContexts, &out)
+	if res.statusCode != htStatusOK {
+		t.Fatalf(htMsgStatus, res.statusCode)
+	}
+
+	requireLen(t, out, htOne)
+
+	if out[htFirst].Name != htTestContext ||
+		out[htFirst].Cluster != htTestCluster ||
+		!out[htFirst].Current {
+		t.Fatalf("context = %+v", out[htFirst])
+	}
+}
+
+// TestHandle_UnknownContext confirms an unresolvable ?context= is a 400 client
+// error, not a 500 — so a stale bookmark or typo doesn't look like a crash.
+func TestHandle_UnknownContext(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, nil)
+
+	res := getJSON(t, srv, htPathPods+htQueryContext+"does-not-exist", nil)
+	if res.statusCode != htStatusBadReq {
+		t.Fatalf(htMsgStatusBody, res.statusCode, res.body)
+	}
+}
+
+// TestHandle_ContextParamRoutesToSelectedClient proves ?context= actually
+// selects that context's client rather than always serving the default: two
+// contexts hold different pods, and each request must return the pod of the
+// context it names.
+func TestHandle_ContextParamRoutesToSelectedClient(t *testing.T) {
+	t.Parallel()
+
+	defClient, _ := newTestClient(t, nil, newRunningPod(htNameA, htNSDefault))
+	altClient, _ := newTestClient(t, nil, newRunningPod(htNameB, htNSDefault))
+
+	manager := new(ClientManager)
+	manager.clients = map[string]*Client{
+		ktContextName: defClient,
+		htCtxOther:    altClient,
+	}
+	manager.contexts = []ContextInfo{
+		{Name: ktContextName, Cluster: ktClusterName, Current: true},
+		{Name: htCtxOther, Cluster: htTestCluster, Current: false},
+	}
+	manager.defaultContext = ktContextName
+
+	srv := httptest.NewServer(
+		withCORS(newRouter(manager), parseCORSOrigins(htEmpty)),
+	)
+	t.Cleanup(srv.Close)
+
+	assertPodsForContext(t, srv, htEmpty, htNameA)
+	assertPodsForContext(t, srv, htQueryContext+ktContextName, htNameA)
+	assertPodsForContext(t, srv, htQueryContext+htCtxOther, htNameB)
+}
+
+// assertPodsForContext fetches /api/pods with the given query string and
+// asserts the response holds exactly one pod with the wanted name.
+func assertPodsForContext(
+	t *testing.T,
+	srv *httptest.Server,
+	query, want string,
+) {
+	t.Helper()
+
+	var out []Pod
+
+	res := getJSON(t, srv, htPathPods+query, &out)
+	if res.statusCode != htStatusOK {
+		t.Fatalf(htMsgStatusBody, res.statusCode, res.body)
+	}
+
+	if len(out) != htOne || out[htFirst].Name != want {
+		t.Fatalf("pods for %q = %+v, want [%s]", query, out, want)
 	}
 }
 

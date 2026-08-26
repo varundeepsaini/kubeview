@@ -1,6 +1,6 @@
 module github.com/ankur-kalita/kubeview/kubeview-backend
 
-go 1.26.4
+go 1.26.6
 
 require (
 	k8s.io/api v0.36.1
@@ -32,7 +32,7 @@ require (
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect

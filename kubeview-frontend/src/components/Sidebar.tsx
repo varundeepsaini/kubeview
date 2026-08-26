@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React from "react";
+import ContextSwitcher from "./ContextSwitcher";
 
 const nav = [
   { href: "/", label: "Dashboard", icon: "grid" },
@@ -62,6 +63,7 @@ export default function Sidebar() {
           <span className="text-accent">Kube</span>View
         </h1>
         <p className="text-xs text-muted mt-1">Cluster Management</p>
+        <ContextSwitcher />
       </div>
       <nav className="flex-1 p-3 space-y-1">
         {nav.map((item) => {

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import { ClusterProvider } from "@/components/ClusterProvider";
+import ClusterScope from "@/components/ClusterScope";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,10 +30,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}
       >
-        <Sidebar />
-        <main className="ml-56 min-h-screen p-6">
-          {children}
-        </main>
+        <ClusterProvider>
+          <Sidebar />
+          <ClusterScope>{children}</ClusterScope>
+        </ClusterProvider>
       </body>
     </html>
   );
