@@ -23,7 +23,8 @@ var errUnknownContext = errors.New("unknown context")
 // misread as "unknown context: \"\"" when current-context is simply unset.
 var (
 	errNoContexts = errors.New(
-		"kubeconfig defines no contexts (is KUBECONFIG pointing at an existing file?)",
+		"kubeconfig defines no contexts " +
+			"(is KUBECONFIG pointing at an existing file?)",
 	)
 	errNoCurrentContext = errors.New(
 		"kubeconfig has no current-context set",
@@ -99,7 +100,7 @@ func NewClientManager() (*ClientManager, error) {
 		return buildClientForContext(loadingRules, rawConfig, name)
 	}
 
-	err = validateDefaultContext(manager)
+	err = manager.validateDefaultContext()
 	if err != nil {
 		return nil, err
 	}
@@ -112,26 +113,6 @@ func NewClientManager() (*ClientManager, error) {
 	}
 
 	return manager, nil
-}
-
-// validateDefaultContext checks at startup that the kubeconfig actually has
-// contexts and that current-context names one of them, so an unset or dangling
-// current-context (or an empty config from a missing KUBECONFIG file) fails
-// with a message describing the config problem.
-func validateDefaultContext(m *ClientManager) error {
-	if len(m.contexts) == zeroCount {
-		return errNoContexts
-	}
-
-	if m.defaultContext == emptyString {
-		return errNoCurrentContext
-	}
-
-	if !m.hasContext(m.defaultContext) {
-		return fmt.Errorf("%w: %q", errBadCurrentContext, m.defaultContext)
-	}
-
-	return nil
 }
 
 // newInClusterManager wraps a single in-cluster client as a manager with one
@@ -200,6 +181,26 @@ func (m *ClientManager) ClientFor(name string) (*Client, error) {
 	m.clients[name] = client
 
 	return client, nil
+}
+
+// validateDefaultContext checks at startup that the kubeconfig actually has
+// contexts and that current-context names one of them, so an unset or dangling
+// current-context (or an empty config from a missing KUBECONFIG file) fails
+// with a message describing the config problem.
+func (m *ClientManager) validateDefaultContext() error {
+	if len(m.contexts) == zeroCount {
+		return errNoContexts
+	}
+
+	if m.defaultContext == emptyString {
+		return errNoCurrentContext
+	}
+
+	if !m.hasContext(m.defaultContext) {
+		return fmt.Errorf("%w: %q", errBadCurrentContext, m.defaultContext)
+	}
+
+	return nil
 }
 
 // hasContext reports whether name is one of the enumerated contexts.

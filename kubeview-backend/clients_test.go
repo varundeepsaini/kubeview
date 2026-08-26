@@ -160,13 +160,7 @@ func TestNewClientManager_FromKubeconfig(t *testing.T) {
 		t.Fatalf("default context client: %v", err)
 	}
 
-	if client.context != ktCtxMy || client.cluster != "my-cluster" {
-		t.Fatalf("c = %+v", client)
-	}
-
-	if client.clientset == nil || client.discovery == nil {
-		t.Fatalf("client fields nil: %+v", client)
-	}
+	requireDefaultClient(t, client)
 
 	_, err = manager.ClientFor("missing")
 	if !errors.Is(err, errUnknownContext) {
@@ -174,18 +168,30 @@ func TestNewClientManager_FromKubeconfig(t *testing.T) {
 	}
 }
 
-// newClientManagerErr runs NewClientManager against the given kubeconfig body
-// and returns only the error.
-func newClientManagerErr(t *testing.T, kubeconfig string) error {
+// requireDefaultClient asserts the eagerly built default client carries the
+// expected context identity and constructed clientsets.
+func requireDefaultClient(t *testing.T, client *Client) {
+	t.Helper()
+
+	if client.context != ktCtxMy || client.cluster != "my-cluster" {
+		t.Fatalf("client = %+v", client)
+	}
+
+	if client.clientset == nil || client.discovery == nil {
+		t.Fatalf("client fields nil: %+v", client)
+	}
+}
+
+// writeKubeconfig writes the given kubeconfig body to a temp file and returns
+// its path. Callers t.Setenv it themselves so the KUBECONFIG mutation stays
+// visible in the test body.
+func writeKubeconfig(t *testing.T, kubeconfig string) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), ktConfigFileName)
 	mustWrite(t, path, kubeconfig)
-	t.Setenv(ktEnvKubeconfig, path)
 
-	_, err := NewClientManager()
-
-	return err
+	return path
 }
 
 // A kubeconfig config problem (rather than a bad ?context= request) must
@@ -193,10 +199,14 @@ func newClientManagerErr(t *testing.T, kubeconfig string) error {
 
 func TestNewClientManager_NoCurrentContext(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	err := newClientManagerErr(
+	t.Setenv(ktEnvKubeconfig, writeKubeconfig(
 		t,
-		strings.Replace(ktKubeconfigYAML, "current-context: my-ctx\n", "", 1),
-	)
+		strings.Replace(
+			ktKubeconfigYAML, "current-context: my-ctx\n", "", ktOne,
+		),
+	))
+
+	_, err := NewClientManager()
 	if !errors.Is(err, errNoCurrentContext) {
 		t.Fatalf("err = %v, want errNoCurrentContext", err)
 	}
@@ -204,10 +214,12 @@ func TestNewClientManager_NoCurrentContext(t *testing.T) {
 
 func TestNewClientManager_DanglingCurrentContext(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	err := newClientManagerErr(
+	t.Setenv(ktEnvKubeconfig, writeKubeconfig(
 		t,
-		strings.Replace(ktKubeconfigYAML, "my-ctx\n", "gone-ctx\n", 1),
-	)
+		strings.Replace(ktKubeconfigYAML, "my-ctx\n", "gone-ctx\n", ktOne),
+	))
+
+	_, err := NewClientManager()
 	if !errors.Is(err, errBadCurrentContext) {
 		t.Fatalf("err = %v, want errBadCurrentContext", err)
 	}
@@ -227,7 +239,9 @@ func TestNewClientManager_MissingKubeconfigFile(t *testing.T) {
 
 func TestNewClientManager_BadKubeconfig(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	err := newClientManagerErr(t, "this is not yaml: [[[")
+	t.Setenv(ktEnvKubeconfig, writeKubeconfig(t, "this is not yaml: [[["))
+
+	_, err := NewClientManager()
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -240,7 +254,7 @@ func TestNewClientManager_BadKubeconfig(t *testing.T) {
 // kubernetes.NewForConfig fails when it tries to derive the server URL.
 func TestNewClientManager_InvalidServerURLBreaksClientsetBuild(t *testing.T) {
 	// NOTE: mutates KUBECONFIG via t.Setenv; not parallel-safe.
-	err := newClientManagerErr(t, `apiVersion: v1
+	t.Setenv(ktEnvKubeconfig, writeKubeconfig(t, `apiVersion: v1
 kind: Config
 current-context: c
 clusters:
@@ -253,7 +267,9 @@ contexts:
 users:
 - name: u
   user: {token: fake}
-`)
+`))
+
+	_, err := NewClientManager()
 	if err == nil {
 		t.Fatal("expected error from clientset build with invalid server URL")
 	}

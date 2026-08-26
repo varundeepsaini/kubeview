@@ -34,6 +34,14 @@ linters:
       check-blank: true
     exhaustive:
       default-signifies-exhaustive: true
+    exhaustruct:
+      # These upstream types contain deprecated fields (ObjectMeta.SelfLink,
+      # NodeSystemInfo.KubeProxyVersion, NodeSpec.ConfigSource) that staticcheck
+      # SA1019 forbids initializing, so exhaustive literals are impossible.
+      exclude:
+        - 'k8s\.io/apimachinery/pkg/apis/meta/v1\.ObjectMeta'
+        - 'k8s\.io/api/core/v1\.NodeSystemInfo'
+        - 'k8s\.io/api/core/v1\.NodeSpec'
 
   exclusions:
     rules:
