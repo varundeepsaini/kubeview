@@ -166,9 +166,8 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 
 func newRouter(manager *ClientManager) *http.ServeMux {
 	const (
-		podDetailRoute    = "GET /api/pods/{namespace}/{name}"
-		podLogsRoute      = "GET /api/pods/{namespace}/{name}/logs"
-		secretDetailRoute = "GET /api/secrets/{namespace}/{name}"
+		podDetailRoute = "GET /api/pods/{namespace}/{name}"
+		podLogsRoute   = "GET /api/pods/{namespace}/{name}/logs"
 	)
 
 	// wrap binds a resource handler to the manager so per-request client
@@ -191,7 +190,6 @@ func newRouter(manager *ClientManager) *http.ServeMux {
 	mux.HandleFunc("GET /api/events", wrap(handleEvents))
 	mux.HandleFunc("GET /api/configmaps", wrap(handleConfigMaps))
 	mux.HandleFunc("GET /api/secrets", wrap(handleSecrets))
-	mux.HandleFunc(secretDetailRoute, wrap(handleSecret))
 	mux.HandleFunc("GET /api/ingresses", wrap(handleIngresses))
 	mux.HandleFunc("GET /api/statefulsets", wrap(handleStatefulSets))
 	mux.HandleFunc("GET /api/daemonsets", wrap(handleDaemonSets))
@@ -987,40 +985,6 @@ func handleSecrets(
 	}
 
 	writeJSON(writer, http.StatusOK, out)
-}
-
-func handleSecret(
-	client *Client,
-	writer http.ResponseWriter,
-	req *http.Request,
-) {
-	item, err := client.GetSecret(
-		req.Context(),
-		req.PathValue(paramNamespace),
-		req.PathValue(paramName),
-	)
-	if err != nil {
-		if isNotFound(err) {
-			writeJSONError(writer, http.StatusNotFound, "Secret not found")
-
-			return
-		}
-
-		writeError(writer, err)
-
-		return
-	}
-
-	values := make(map[string]string, len(item.Data))
-	for key, value := range item.Data {
-		values[key] = string(value)
-	}
-
-	writeJSON(writer, http.StatusOK, map[string]any{
-		"name":      item.Name,
-		"namespace": item.Namespace,
-		"values":    values,
-	})
 }
 
 func handleIngresses(

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -18,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	core "k8s.io/client-go/testing"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const (
@@ -1239,4 +1241,187 @@ func testGetClusterInfoListNodesErr(t *testing.T) {
 
 	_, err := client.GetClusterInfo(context.Background())
 	requireErr(t, err)
+}
+
+// --- clusterNameFor ---
+
+func TestClusterNameFor(t *testing.T) {
+	t.Parallel()
+
+	withCluster := clientcmdapi.NewContext()
+	withCluster.Cluster = ktClusterName
+	noCluster := clientcmdapi.NewContext()
+
+	raw := clientcmdapi.NewConfig()
+	raw.Contexts["has-cluster"] = withCluster
+	raw.Contexts["no-cluster"] = noCluster
+
+	cases := []struct {
+		name    string
+		current string
+		want    string
+	}{
+		{
+			name:    "context bound to a cluster",
+			current: "has-cluster",
+			want:    ktClusterName,
+		},
+		{
+			name:    "context with empty cluster falls back to unknown",
+			current: "no-cluster",
+			want:    ttUnknownLower,
+		},
+		{
+			name:    "current context absent from config",
+			current: "missing",
+			want:    ttUnknownLower,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := clusterNameFor(*raw, testCase.current)
+			if got != testCase.want {
+				t.Fatalf(
+					"clusterNameFor(%q) = %q, want %q",
+					testCase.current, got, testCase.want,
+				)
+			}
+		})
+	}
+}
+
+// --- GetPodLogs stream + container-resolution edges ---
+
+func TestClient_GetPodLogs_StreamOpenErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	client, clientset := newTestClient(
+		t, nil,
+		ktNewPod(ktPodWeb, ktNamespaceDefault),
+	)
+	clientset.PrependReactor(
+		ktVerbGet,
+		ktResourcePods,
+		func(action core.Action) (bool, runtime.Object, error) {
+			genericAction, ok := action.(core.GenericAction)
+			if !ok || genericAction.GetSubresource() != ktSubresourceLog {
+				return false, nil, nil
+			}
+
+			return true, nil, errBoomKt
+		},
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktContainerSidecar,
+		ktDefaultTailLines,
+	)
+	requireErr(t, err)
+
+	if !strings.Contains(err.Error(), "open log stream") {
+		t.Fatalf("err = %v, want open-log-stream wrap", err)
+	}
+}
+
+func TestClient_GetPodLogs_AnnotationNamesEphemeralContainer(t *testing.T) {
+	t.Parallel()
+
+	// kubectl resolves the default-container annotation against ephemeral
+	// debug containers too, so an annotation naming one must be honored.
+
+	mainContainer := ktZeroContainer
+	mainContainer.Name = ktContainerMain
+
+	debug := new(corev1.EphemeralContainer)
+	debug.Name = ktContainerDebug
+
+	pod := ktNewPod(ktPodWeb, ktNamespaceDefault)
+	pod.Spec.Containers = []corev1.Container{mainContainer}
+	pod.Spec.EphemeralContainers = []corev1.EphemeralContainer{*debug}
+	pod.Annotations = map[string]string{
+		ktAnnotationDefaultContainer: ktContainerDebug,
+	}
+
+	client, clientset := newTestClient(t, nil, pod)
+
+	var captured string
+
+	clientset.PrependReactor(
+		ktVerbGet,
+		ktResourcePods,
+		logReactor(t, ktBodyOK, func(opts *corev1.PodLogOptions) {
+			captured = opts.Container
+		}),
+	)
+
+	_, err := client.GetPodLogs(
+		context.Background(),
+		ktNamespaceDefault,
+		ktPodWeb,
+		ktEmpty,
+		ktDefaultTailLines,
+	)
+	requireNoErr(t, err)
+
+	if captured != ktContainerDebug {
+		t.Fatalf(ktMsgContainerOpt, ktContainerDebug, captured)
+	}
+}
+
+const ktContainerDebug = "debugger"
+
+// --- closeLogStream ---
+
+// recordingCloser counts Close calls and returns a configured error.
+type recordingCloser struct {
+	err    error
+	closes int
+}
+
+func (c *recordingCloser) Close() error {
+	c.closes++
+
+	return c.err
+}
+
+func TestCloseLogStream(t *testing.T) {
+	t.Parallel()
+
+	t.Run("closes the stream", func(t *testing.T) {
+		t.Parallel()
+
+		closer := &recordingCloser{err: nil, closes: ktZero}
+		closeLogStream(closer)
+
+		if closer.closes != ktOne {
+			t.Fatalf("closes = %d", closer.closes)
+		}
+	})
+
+	t.Run("close error is logged, not propagated", func(t *testing.T) {
+		t.Parallel()
+
+		closer := &recordingCloser{err: errBoomKt, closes: ktZero}
+		closeLogStream(closer)
+
+		if closer.closes != ktOne {
+			t.Fatalf("closes = %d", closer.closes)
+		}
+	})
+}
+
+// --- fileMissing (empty-path sentinel) ---
+
+func TestFileMissing_EmptyPath(t *testing.T) {
+	t.Parallel()
+
+	if !fileMissing(ktEmpty) {
+		t.Fatal("empty path must report missing")
+	}
 }

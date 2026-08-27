@@ -451,50 +451,72 @@ func (c *Client) ListEvents(
 	return list.Items, nil
 }
 
-func (c *Client) ListConfigMaps(ctx context.Context, namespace string) ([]corev1.ConfigMap, error) {
-	list, err := c.clientset.CoreV1().ConfigMaps(namespace).List(ctx, listOptions())
+func (c *Client) ListConfigMaps(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.ConfigMap, error) {
+	configMaps := c.clientset.CoreV1().ConfigMaps(namespace)
+
+	list, err := configMaps.List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list configmaps: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListSecrets(ctx context.Context, namespace string) ([]corev1.Secret, error) {
-	list, err := c.clientset.CoreV1().Secrets(namespace).List(ctx, listOptions())
+func (c *Client) ListSecrets(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.Secret, error) {
+	secrets := c.clientset.CoreV1().Secrets(namespace)
+
+	list, err := secrets.List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list secrets: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) GetSecret(ctx context.Context, namespace, name string) (*corev1.Secret, error) {
-	secret, err := c.clientset.CoreV1().Secrets(namespace).Get(ctx, name, getOptions())
-	if err != nil {
-		return nil, fmt.Errorf("get secret: %w", err)
-	}
-	return secret, nil
-}
+func (c *Client) ListIngresses(
+	ctx context.Context,
+	namespace string,
+) ([]networkingv1.Ingress, error) {
+	ingresses := c.clientset.NetworkingV1().Ingresses(namespace)
 
-func (c *Client) ListIngresses(ctx context.Context, namespace string) ([]networkingv1.Ingress, error) {
-	list, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, listOptions())
+	list, err := ingresses.List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list ingresses: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListStatefulSets(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
-	list, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, listOptions())
+func (c *Client) ListStatefulSets(
+	ctx context.Context,
+	namespace string,
+) ([]appsv1.StatefulSet, error) {
+	statefulSets := c.clientset.AppsV1().StatefulSets(namespace)
+
+	list, err := statefulSets.List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list statefulsets: %w", err)
 	}
+
 	return list.Items, nil
 }
 
-func (c *Client) ListDaemonSets(ctx context.Context, namespace string) ([]appsv1.DaemonSet, error) {
-	list, err := c.clientset.AppsV1().DaemonSets(namespace).List(ctx, listOptions())
+func (c *Client) ListDaemonSets(
+	ctx context.Context,
+	namespace string,
+) ([]appsv1.DaemonSet, error) {
+	daemonSets := c.clientset.AppsV1().DaemonSets(namespace)
+
+	list, err := daemonSets.List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list daemonsets: %w", err)
 	}
+
 	return list.Items, nil
 }
