@@ -1,33 +1,102 @@
 "use client";
 
-import { useCallback, useState, use } from "react";
-import { api, Pod } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState, use } from "react";
+import { api, Pod, podLogStreamUrl } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 import Link from "next/link";
 
+// A followed stream is unbounded; keep only a tail window so a chatty pod
+// left open cannot grow memory and render cost forever.
+const maxLogLines = 5000;
+
+function appendLogLines(current: string[], lines: string[]): string[] {
+  const next = [...current, ...lines];
+  return next.length > maxLogLines ? next.slice(next.length - maxLogLines) : next;
+}
+
 export default function PodDetailPage({ params }: { params: Promise<{ namespace: string; name: string }> }) {
   const { namespace, name } = use(params);
   const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview");
   const [selectedContainer, setSelectedContainer] = useState<string>("");
-  const [logs, setLogs] = useState<string>("");
+  const [logs, setLogs] = useState<string[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
+  const [logsPaused, setLogsPaused] = useState(false);
+  const logSource = useRef<EventSource | null>(null);
+  const logsPausedRef = useRef(false);
+  // Lines received while paused; the stream keeps flowing and the buffer is
+  // appended on resume. A reconnect discards it: the replayed tail becomes
+  // the authoritative content instead.
+  const pausedLogs = useRef<string[]>([]);
 
   const fetcher = useCallback(() => api.getPod(namespace, name), [namespace, name]);
   const { data: pod, error, loading, refresh } = usePolling<Pod>(fetcher);
 
-  const fetchLogs = async (container?: string) => {
-    setLogsLoading(true);
-    try {
-      const res = await api.getPodLogs(namespace, name, container || undefined);
-      setLogs(res.logs);
-    } catch (err) {
-      setLogs(err instanceof Error ? `Error: ${err.message}` : "Failed to fetch logs");
+  const stopLogs = useCallback(() => { logSource.current?.close(); logSource.current = null; }, []);
+  const streamLogs = useCallback((container?: string) => {
+    stopLogs(); setLogs([]); setLogsLoading(true); setLogsPaused(false);
+    logsPausedRef.current = false; pausedLogs.current = [];
+    const source = new EventSource(podLogStreamUrl(namespace, name, container));
+    logSource.current = source;
+    // Error markers go through the pause buffer too, or a failure while
+    // paused would render before the earlier lines flushed on Resume.
+    const appendLine = (line: string) => {
+      if (logsPausedRef.current) {
+        pausedLogs.current.push(line);
+        if (pausedLogs.current.length > maxLogLines) pausedLogs.current.shift();
+        return;
+      }
+      setLogs(current => appendLogLines(current, [line]));
+    };
+    source.addEventListener("log", (event) => {
+      appendLine(JSON.parse((event as MessageEvent).data) as string);
+      setLogsLoading(false);
+    });
+    // Every (re)connect replays the tail, so drop displayed and pause-buffered
+    // lines alike: the replay is authoritative, and keeping either would
+    // duplicate replayed lines after a browser auto-reconnect. Unpause too,
+    // else a reconnect while paused diverts the replay into the invisible
+    // buffer and the pane sits blank until Resume.
+    source.onopen = () => {
+      setLogs([]);
+      pausedLogs.current = [];
+      logsPausedRef.current = false;
+      setLogsPaused(false);
+      setLogsLoading(false);
+    };
+    // The backend signals end-of-stream; close so EventSource does not
+    // auto-reconnect and replay the tail forever. A non-eof reason means the
+    // upstream read failed, not that the container stopped logging.
+    source.addEventListener("end", (event) => {
+      stopLogs();
+      setLogsLoading(false);
+      const { reason } = JSON.parse((event as MessageEvent).data) as { reason: string };
+      if (reason !== "eof") appendLine("Error: log stream ended unexpectedly");
+    });
+    source.onerror = () => {
+      setLogsLoading(false);
+      // Browsers auto-reconnect established streams; CLOSED means a non-200
+      // (container not started, pod gone, forbidden) that will never retry.
+      if (source.readyState !== EventSource.CLOSED || logSource.current !== source) return;
+      logSource.current = null;
+      appendLine("Error: failed to stream logs");
+    };
+  }, [name, namespace, stopLogs]);
+  const toggleLogsPaused = () => {
+    if (logsPausedRef.current) {
+      const buffered = pausedLogs.current;
+      setLogs(current => appendLogLines(current, buffered));
+      pausedLogs.current = [];
+      logsPausedRef.current = false;
+      setLogsPaused(false);
+    } else {
+      logsPausedRef.current = true;
+      setLogsPaused(true);
     }
-    setLogsLoading(false);
   };
+  useEffect(() => stopLogs, [stopLogs]);
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error} onRetry={refresh} />;
@@ -66,7 +135,10 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
             key={tab}
             onClick={() => {
               setActiveTab(tab);
-              if (tab === "logs" && !logs) fetchLogs(activeContainer);
+              // Restart whenever no stream is live (never started, ended, or
+              // failed), not just when the pane is empty: after an "end" or a
+              // fatal error the stale tail keeps logs.length > 0 forever.
+              if (tab === "logs" && !logSource.current) streamLogs(activeContainer);
             }}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
@@ -187,7 +259,7 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                   value={activeContainer}
                   onChange={(e) => {
                     setSelectedContainer(e.target.value);
-                    fetchLogs(e.target.value);
+                    streamLogs(e.target.value);
                   }}
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
@@ -199,18 +271,18 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                 </select>
               )}
               <button
-                onClick={() => fetchLogs(activeContainer)}
+                onClick={toggleLogsPaused}
                 className="px-3 py-1.5 bg-accent/10 text-accent rounded-lg text-xs hover:bg-accent/20 transition-colors"
               >
-                Refresh
+                {logsPaused ? "Resume" : "Pause"}
               </button>
             </div>
           </div>
           <div className="bg-black rounded-lg p-4 max-h-[600px] overflow-auto font-mono text-xs leading-5">
             {logsLoading ? (
               <div className="text-muted">Loading logs...</div>
-            ) : logs ? (
-              logs.split("\n").map((line, i) => (
+            ) : logs.length > 0 ? (
+              logs.map((line, i) => (
                 <div key={i} className="hover:bg-white/[0.03]">
                   <span className="text-muted/50 select-none mr-3">{i + 1}</span>
                   {line}

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { api, Pod } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { formatAge, useNow, useWatchList } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
@@ -14,7 +14,8 @@ export default function PodsPage() {
   const [namespace, setNamespace] = useState("");
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getPods(namespace || undefined), [namespace]);
-  const { data, error, loading, refresh } = usePolling<Pod[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "pods", namespace || undefined);
+  const now = useNow();
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -70,7 +71,7 @@ export default function PodsPage() {
                   <td className="p-4">{pod.restarts > 0 ? <span className="text-accent-orange">{pod.restarts}</span> : 0}</td>
                   <td className="p-4 text-muted text-xs">{pod.node}</td>
                   <td className="p-4 font-mono text-xs text-muted">{pod.ip}</td>
-                  <td className="p-4 text-muted">{pod.age}</td>
+                  <td className="p-4 text-muted">{formatAge(pod.createdAt, now)}</td>
                 </tr>
               ))}
             </tbody>

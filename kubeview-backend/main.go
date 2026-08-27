@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,9 +16,13 @@ import (
 const (
 	defaultPort     = "5501"
 	readTimeout     = 15 * time.Second
-	writeTimeout    = 60 * time.Second // pod-log requests can be slow
 	idleTimeout     = 120 * time.Second
 	shutdownTimeout = 10 * time.Second
+
+	// noWriteTimeout disables the write deadline: watch and log responses are
+	// intentionally long-lived. Client disconnects still cancel their request
+	// contexts and stop the Kubernetes streams.
+	noWriteTimeout time.Duration = 0
 
 	// signalChannelBuffer holds at least one pending OS signal so a delivery is
 	// never dropped while serve() is busy starting up.
@@ -30,6 +35,7 @@ const (
 // KubeEvent is the response shape for a cluster event. JSON tags must match
 // what the frontend expects in kubeview-frontend/src/lib/api.ts.
 type KubeEvent struct {
+	Name      string `json:"name"`
 	Type      string `json:"type"`
 	Reason    string `json:"reason"`
 	Message   string `json:"message"`
@@ -68,8 +74,16 @@ func run() error {
 	server.Addr = ":" + port
 	server.Handler = withCORS(newRouter(manager), corsOrigins)
 	server.ReadTimeout = readTimeout
-	server.WriteTimeout = writeTimeout
+	server.WriteTimeout = noWriteTimeout
 	server.IdleTimeout = idleTimeout
+
+	// Shutdown only waits for connections to go idle, and the SSE watch/log
+	// handlers loop on their request contexts forever, so an open dashboard
+	// would stall shutdown until the timeout. Cancelling the base context on
+	// shutdown cancels those request contexts and ends the streams.
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	server.BaseContext = func(net.Listener) context.Context { return baseCtx }
+	server.RegisterOnShutdown(cancelBase)
 
 	stop := make(chan os.Signal, signalChannelBuffer)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

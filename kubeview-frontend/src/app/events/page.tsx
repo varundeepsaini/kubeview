@@ -1,18 +1,18 @@
 "use client";
 
 import { useCallback, useState, useMemo } from "react";
-import { api, KubeEvent } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useNow, useWatchList } from "@/lib/hooks";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 
-function formatRelative(timestamp: string): string {
+function formatRelative(timestamp: string, now: number): string {
   if (!timestamp) return "—";
   const created = new Date(timestamp).getTime();
   if (Number.isNaN(created)) return "—";
-  const diffSecs = Math.floor((Date.now() - created) / 1000);
+  const diffSecs = Math.floor((now - created) / 1000);
   if (diffSecs < 60) return `${diffSecs}s ago`;
   const diffMins = Math.floor(diffSecs / 60);
   if (diffMins < 60) return `${diffMins}m ago`;
@@ -40,7 +40,8 @@ export default function EventsPage() {
   const [namespace, setNamespace] = useState("");
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getEvents(namespace || undefined), [namespace]);
-  const { data, error, loading, refresh } = usePolling<KubeEvent[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "events", namespace || undefined);
+  const now = useNow();
 
   const sortedAndFiltered = useMemo(() => {
     if (!data) return [];
@@ -131,7 +132,7 @@ export default function EventsPage() {
                       )}
                     </td>
                     <td className="p-4 text-muted text-xs">{e.source}</td>
-                    <td className="p-4 text-muted">{formatRelative(e.lastSeen)}</td>
+                    <td className="p-4 text-muted">{formatRelative(e.lastSeen, now)}</td>
                   </tr>
                 ))
               )}

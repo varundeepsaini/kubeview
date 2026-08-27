@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback } from "react";
-import { api, NodeInfo } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { formatAge, useNow, useWatchList } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
 
 export default function NodesPage() {
   const fetcher = useCallback(() => api.getNodes(), []);
-  const { data, error, loading, refresh } = usePolling<NodeInfo[]>(fetcher);
+  const { data, error, loading, refresh } = useWatchList(fetcher, "nodes");
+  const now = useNow();
 
   if (loading) return <LoadingSpinner />;
   if (error) return <ErrorMessage message={error} onRetry={refresh} />;
@@ -34,7 +35,7 @@ export default function NodesPage() {
                   </span>
                 ))}
               </div>
-              <span className="text-sm text-muted">{node.age}</span>
+              <span className="text-sm text-muted">{formatAge(node.createdAt, now)}</span>
             </div>
 
             <div className="grid grid-cols-4 gap-4">

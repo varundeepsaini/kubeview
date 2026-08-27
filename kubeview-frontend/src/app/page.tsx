@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import { api, ClusterInfo, Namespace, Pod, Deployment, NodeInfo } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api, ClusterInfo } from "@/lib/api";
+import { formatAge, useNow, usePolling, useWatchList } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorMessage from "@/components/ErrorMessage";
@@ -16,10 +16,11 @@ export default function Dashboard() {
   const nodesFetcher = useCallback(() => api.getNodes(), []);
 
   const { data: cluster, error: clusterErr, loading } = usePolling<ClusterInfo>(clusterFetcher);
-  const { data: namespaces } = usePolling<Namespace[]>(nsFetcher);
-  const { data: pods } = usePolling<Pod[]>(podsFetcher);
-  const { data: deployments } = usePolling<Deployment[]>(depsFetcher);
-  const { data: nodes } = usePolling<NodeInfo[]>(nodesFetcher);
+  const { data: namespaces } = useWatchList(nsFetcher, "namespaces");
+  const { data: pods } = useWatchList(podsFetcher, "pods");
+  const { data: deployments } = useWatchList(depsFetcher, "deployments");
+  const { data: nodes } = useWatchList(nodesFetcher, "nodes");
+  const now = useNow();
 
   if (loading) return <LoadingSpinner message="Connecting to cluster..." />;
   if (clusterErr) return <ErrorMessage message={clusterErr} />;
@@ -117,7 +118,7 @@ export default function Dashboard() {
                   <td className="py-3"><StatusBadge status={pod.status} /></td>
                   <td className="py-3 font-mono text-xs">{pod.ready}</td>
                   <td className="py-3">{pod.restarts}</td>
-                  <td className="py-3 text-muted">{pod.age}</td>
+                  <td className="py-3 text-muted">{formatAge(pod.createdAt, now)}</td>
                 </tr>
               ))}
             </tbody>

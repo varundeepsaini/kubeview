@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback } from "react";
-import { api, Namespace } from "@/lib/api";
-import { usePolling } from "@/lib/hooks";
+import { api } from "@/lib/api";
+import { useWatchList } from "@/lib/hooks";
 
 interface NamespaceFilterProps {
   value: string;
@@ -11,7 +11,7 @@ interface NamespaceFilterProps {
 
 export default function NamespaceFilter({ value, onChange }: NamespaceFilterProps) {
   const fetcher = useCallback(() => api.getNamespaces(), []);
-  const { data: namespaces } = usePolling<Namespace[]>(fetcher, 30000);
+  const { data: namespaces } = useWatchList(fetcher, "namespaces");
 
   return (
     <select

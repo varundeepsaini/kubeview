@@ -607,6 +607,7 @@ func transformEvent(event corev1.Event) KubeEvent {
 	object := fmt.Sprintf("%s/%s", involved.Kind, involved.Name)
 
 	return KubeEvent{
+		Name:      event.Name,
 		Type:      event.Type,
 		Reason:    event.Reason,
 		Message:   event.Message,

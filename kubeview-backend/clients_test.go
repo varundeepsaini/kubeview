@@ -53,21 +53,6 @@ func newTestManager(
 	return manager, builds
 }
 
-// The client timeout must stay under the server's write timeout: at the write
-// timeout the connection is severed mid-response, while a client timeout
-// before it still yields a JSON error. It must also leave room for legitimate
-// slow requests (pod-log tails, large lists) that writeTimeout budgets for.
-func TestClientRequestTimeoutUnderWriteTimeout(t *testing.T) {
-	t.Parallel()
-
-	if clientRequestTimeout >= writeTimeout {
-		t.Fatalf(
-			"clientRequestTimeout %v must be under writeTimeout %v",
-			clientRequestTimeout, writeTimeout,
-		)
-	}
-}
-
 func TestClientManager_ClientForDefault(t *testing.T) {
 	t.Parallel()
 
