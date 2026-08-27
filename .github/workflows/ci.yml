@@ -195,6 +195,9 @@ jobs:
           kubectl apply -f kubeview-e2e/fixtures.yaml
           kubectl -n e2e-demo wait --for=condition=Ready \
             pod/e2e-logger pod/e2e-multi --timeout=120s
+          # The statefulsets/daemonsets specs assert on ready counts.
+          kubectl -n e2e-demo rollout status statefulset/e2e-db --timeout=120s
+          kubectl -n e2e-demo rollout status daemonset/e2e-agent --timeout=120s
 
       # Compile the backend up front so its cold build doesn't ride inside
       # Playwright's webServer health-check window (fail fast on a build error

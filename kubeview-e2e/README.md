@@ -20,6 +20,8 @@ kubectl context, plus Go and Node installed.
 kubectl delete -f fixtures.yaml --ignore-not-found
 kubectl apply -f fixtures.yaml
 kubectl -n e2e-demo wait --for=condition=Ready pod/e2e-logger pod/e2e-multi --timeout=120s
+kubectl -n e2e-demo rollout status statefulset/e2e-db --timeout=120s
+kubectl -n e2e-demo rollout status daemonset/e2e-agent --timeout=120s
 
 # 2. Build the frontend (its API base is inlined at build time and defaults
 #    to http://localhost:5501/api).
@@ -42,4 +44,7 @@ throwaway kind cluster is created first.
 
 `fixtures.yaml` seeds namespace `e2e-demo` with stable-named resources:
 `e2e-logger` (emits a known log line), `e2e-multi` (two containers, for the
-log container picker), deployment `e2e-web`, and service `e2e-svc`.
+log container picker), deployment `e2e-web`, service `e2e-svc`, configmap
+`e2e-config`, secret `e2e-secret`, ingresses `e2e-ing-hostonly` (host-only
+rule, no http section — backend nil-panic regression guard) and
+`e2e-ing-paths`, statefulset `e2e-db`, and daemonset `e2e-agent`.

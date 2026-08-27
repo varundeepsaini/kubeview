@@ -213,6 +213,35 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 }
 
+// TestRun_ListenErrorPropagates drives run() past client construction into
+// serve(), where binding to an already-occupied port must surface the listen
+// error. Not parallel: t.Setenv forbids t.Parallel.
+func TestRun_ListenErrorPropagates(t *testing.T) {
+	dir := t.TempDir()
+	kc := dir + "/config"
+
+	err := os.WriteFile(kc, []byte(mtKubeConfigYAML), mtConfigPerm)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv(mtKubeConfigEnv, kc)
+	t.Setenv(mtPortEnv, itoa(occupyPort(t)))
+
+	done := make(chan error, mtChanBuf)
+
+	go func() { done <- run() }()
+
+	select {
+	case runErr := <-done:
+		if runErr == nil {
+			t.Fatal("expected listen error from run()")
+		}
+	case <-time.After(mtRunWait):
+		t.Fatal("run() did not return")
+	}
+}
+
 // itoa avoids pulling in strconv just for an int->string conversion in a test.
 func itoa(n int) string {
 	if n == mtZero {
@@ -284,6 +313,31 @@ func newServer(addr string) *http.Server {
 		HTTP2:                        nil,
 		Protocols:                    nil,
 	}
+}
+
+// occupyPort holds a listener open for the duration of the test and returns
+// its port, so a subsequent bind to that port fails with address-in-use.
+func occupyPort(t *testing.T) int {
+	t.Helper()
+
+	listener, err := listen(t, mtLoopbackAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		cerr := listener.Close()
+		if cerr != nil {
+			t.Errorf("close listener: %v", cerr)
+		}
+	})
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener addr is %T, want *net.TCPAddr", listener.Addr())
+	}
+
+	return addr.Port
 }
 
 func newEphemeralServer(t *testing.T) (*http.Server, string) {

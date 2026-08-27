@@ -13,6 +13,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/discovery"
@@ -445,6 +446,76 @@ func (c *Client) ListEvents(
 	list, err := c.clientset.CoreV1().Events(namespace).List(ctx, listOptions())
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+func (c *Client) ListConfigMaps(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.ConfigMap, error) {
+	configMaps := c.clientset.CoreV1().ConfigMaps(namespace)
+
+	list, err := configMaps.List(ctx, listOptions())
+	if err != nil {
+		return nil, fmt.Errorf("list configmaps: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+func (c *Client) ListSecrets(
+	ctx context.Context,
+	namespace string,
+) ([]corev1.Secret, error) {
+	secrets := c.clientset.CoreV1().Secrets(namespace)
+
+	list, err := secrets.List(ctx, listOptions())
+	if err != nil {
+		return nil, fmt.Errorf("list secrets: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+func (c *Client) ListIngresses(
+	ctx context.Context,
+	namespace string,
+) ([]networkingv1.Ingress, error) {
+	ingresses := c.clientset.NetworkingV1().Ingresses(namespace)
+
+	list, err := ingresses.List(ctx, listOptions())
+	if err != nil {
+		return nil, fmt.Errorf("list ingresses: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+func (c *Client) ListStatefulSets(
+	ctx context.Context,
+	namespace string,
+) ([]appsv1.StatefulSet, error) {
+	statefulSets := c.clientset.AppsV1().StatefulSets(namespace)
+
+	list, err := statefulSets.List(ctx, listOptions())
+	if err != nil {
+		return nil, fmt.Errorf("list statefulsets: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+func (c *Client) ListDaemonSets(
+	ctx context.Context,
+	namespace string,
+) ([]appsv1.DaemonSet, error) {
+	daemonSets := c.clientset.AppsV1().DaemonSets(namespace)
+
+	list, err := daemonSets.List(ctx, listOptions())
+	if err != nil {
+		return nil, fmt.Errorf("list daemonsets: %w", err)
 	}
 
 	return list.Items, nil
