@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +18,11 @@ const (
 	readTimeout     = 15 * time.Second
 	idleTimeout     = 120 * time.Second
 	shutdownTimeout = 10 * time.Second
+
+	// noWriteTimeout disables the write deadline: watch and log responses are
+	// intentionally long-lived. Client disconnects still cancel their request
+	// contexts and stop the Kubernetes streams.
+	noWriteTimeout time.Duration = 0
 
 	// signalChannelBuffer holds at least one pending OS signal so a delivery is
 	// never dropped while serve() is busy starting up.
@@ -68,10 +74,16 @@ func run() error {
 	server.Addr = ":" + port
 	server.Handler = withCORS(newRouter(manager), corsOrigins)
 	server.ReadTimeout = readTimeout
-	// Watch and log responses are intentionally long-lived. Client disconnects
-	// still cancel their request contexts and stop the Kubernetes streams.
-	server.WriteTimeout = 0
+	server.WriteTimeout = noWriteTimeout
 	server.IdleTimeout = idleTimeout
+
+	// Shutdown only waits for connections to go idle, and the SSE watch/log
+	// handlers loop on their request contexts forever, so an open dashboard
+	// would stall shutdown until the timeout. Cancelling the base context on
+	// shutdown cancels those request contexts and ends the streams.
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	server.BaseContext = func(net.Listener) context.Context { return baseCtx }
+	server.RegisterOnShutdown(cancelBase)
 
 	stop := make(chan os.Signal, signalChannelBuffer)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

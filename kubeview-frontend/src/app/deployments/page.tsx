@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useMemo } from "react";
 import { api } from "@/lib/api";
-import { useWatchList } from "@/lib/hooks";
+import { formatAge, useNow, useWatchList } from "@/lib/hooks";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -13,6 +13,7 @@ export default function DeploymentsPage() {
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getDeployments(namespace || undefined), [namespace]);
   const { data, error, loading, refresh } = useWatchList(fetcher, "deployments", namespace || undefined);
+  const now = useNow();
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -76,7 +77,7 @@ export default function DeploymentsPage() {
                     <td className="p-4 font-mono text-xs">{dep.availableReplicas}</td>
                     <td className="p-4 text-xs text-muted">{dep.strategy}</td>
                     <td className="p-4 text-xs text-muted max-w-[200px] truncate">{dep.images.join(", ")}</td>
-                    <td className="p-4 text-muted">{dep.age}</td>
+                    <td className="p-4 text-muted">{formatAge(dep.createdAt, now)}</td>
                   </tr>
                 );
               })}

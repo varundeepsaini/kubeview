@@ -177,8 +177,13 @@ export const api = {
     fetchApi<KubeEvent[]>(ns ? `/events?namespace=${ns}` : "/events"),
 };
 
+// eventSourceUrl carries the active context like fetchApi does: watch and
+// log streams must hit the same cluster the lists were fetched from, or a
+// context switch would mix live events from one cluster into another's
+// tables. The context in the URL also makes the shared watch connection
+// reopen on switch (its URL comparison sees a change).
 export function eventSourceUrl(path: string): string {
-  return `${API_BASE}${path}`;
+  return `${API_BASE}${withContext(path)}`;
 }
 
 export function podLogStreamUrl(namespace: string, name: string, container?: string): string {

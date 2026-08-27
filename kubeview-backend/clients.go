@@ -34,14 +34,13 @@ var (
 	)
 )
 
-// clientRequestTimeout bounds each API request a client makes, in both
-// kubeconfig and in-cluster modes, covering the whole exchange including the
-// response body read. Rest configs default to no client timeout, so without
-// this a context whose API server is unreachable (e.g. a VPN-only cluster)
-// would hang every request until the server's write timeout severed the
-// connection instead of returning an error response. It sits just under
-// main.go's 60s writeTimeout so slow-but-legitimate requests (pod-log tails,
-// large list responses) keep nearly the full budget that timeout allocates.
+// clientRequestTimeout bounds each non-streaming API request a client makes,
+// in both kubeconfig and in-cluster modes, covering the whole exchange
+// including the response body read. Rest configs default to no client
+// timeout, so without this a context whose API server is unreachable (e.g. a
+// VPN-only cluster) would hang every request indefinitely instead of
+// returning an error response. Streaming requests (watches, log follows) go
+// through the untimed streamClientset instead — see the Client struct.
 const clientRequestTimeout = 55 * time.Second
 
 // ContextInfo describes one kubeconfig context for the frontend dropdown. JSON
@@ -124,6 +123,11 @@ func newInClusterManager() (*ClientManager, error) {
 		return nil, err
 	}
 
+	streamClientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("create clientset: %w", err)
+	}
+
 	config.Timeout = clientRequestTimeout
 
 	clientset, err := kubernetes.NewForConfig(config)
@@ -132,10 +136,11 @@ func newInClusterManager() (*ClientManager, error) {
 	}
 
 	client := &Client{
-		clientset: clientset,
-		discovery: clientset.Discovery(),
-		context:   kubeCtx.contextName,
-		cluster:   kubeCtx.clusterName,
+		clientset:       clientset,
+		streamClientset: streamClientset,
+		discovery:       clientset.Discovery(),
+		context:         kubeCtx.contextName,
+		cluster:         kubeCtx.clusterName,
 	}
 
 	manager := new(ClientManager)
@@ -251,6 +256,11 @@ func buildClientForContext(
 		return nil, fmt.Errorf("rest config for context %q: %w", name, err)
 	}
 
+	streamClientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("clientset for context %q: %w", name, err)
+	}
+
 	restConfig.Timeout = clientRequestTimeout
 
 	clientset, err := kubernetes.NewForConfig(restConfig)
@@ -259,9 +269,10 @@ func buildClientForContext(
 	}
 
 	return &Client{
-		clientset: clientset,
-		discovery: clientset.Discovery(),
-		context:   name,
-		cluster:   clusterNameFor(raw, name),
+		clientset:       clientset,
+		streamClientset: streamClientset,
+		discovery:       clientset.Discovery(),
+		context:         name,
+		cluster:         clusterNameFor(raw, name),
 	}, nil
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useState, useMemo } from "react";
 import { api } from "@/lib/api";
-import { useWatchList } from "@/lib/hooks";
+import { formatAge, useNow, useWatchList } from "@/lib/hooks";
 import NamespaceFilter from "@/components/NamespaceFilter";
 import SearchInput from "@/components/SearchInput";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -13,6 +13,7 @@ export default function ServicesPage() {
   const [search, setSearch] = useState("");
   const fetcher = useCallback(() => api.getServices(namespace || undefined), [namespace]);
   const { data, error, loading, refresh } = useWatchList(fetcher, "services", namespace || undefined);
+  const now = useNow();
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -69,7 +70,7 @@ export default function ServicesPage() {
                   <td className="p-4 font-mono text-xs text-muted">{svc.clusterIp}</td>
                   <td className="p-4 font-mono text-xs text-muted">{svc.externalIp}</td>
                   <td className="p-4 font-mono text-xs text-muted">{svc.ports.join(", ")}</td>
-                  <td className="p-4 text-muted">{svc.age}</td>
+                  <td className="p-4 text-muted">{formatAge(svc.createdAt, now)}</td>
                 </tr>
               ))}
             </tbody>

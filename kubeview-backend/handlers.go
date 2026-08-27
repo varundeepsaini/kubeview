@@ -42,7 +42,29 @@ const (
 
 	minClientErrorCode = 400
 	maxServerErrorCode = 599
+
+	// scanDoneBuffer lets the scan goroutine report its final error without
+	// blocking, even after the write loop has stopped receiving.
+	scanDoneBuffer = 1
 )
+
+// headerContentType names the header set on every JSON and SSE response.
+const headerContentType = "Content-Type"
+
+// Log lines (single-line JSON, stack traces) can exceed bufio.Scanner's
+// default 64KB token limit, which would end the scan with ErrTooLong and
+// silently kill the stream mid-log.
+const (
+	logScanInitialBuf = 64 * 1024
+	logScanMaxBuf     = 1024 * 1024
+)
+
+// sseHeartbeatInterval paces keepalive comments on SSE streams. Without them
+// a quiet stream over a half-open connection (NAT idle expiry, VPN drop)
+// never errors: the browser sees readyState OPEN forever and the server holds
+// the handler and its upstream watches indefinitely. Periodic writes keep
+// idle timeouts from killing the path and surface dead peers as write errors.
+const sseHeartbeatInterval = 30 * time.Second
 
 // maxTailLines caps the number of log lines a single request may pull. Without
 // a bound a client can ask for an arbitrarily large tail, forcing the server to
@@ -126,7 +148,9 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 		}
 
 		writer.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		writer.Header().Set(
+			"Access-Control-Allow-Headers", headerContentType,
+		)
 
 		if req.Method == http.MethodOptions {
 			writer.WriteHeader(http.StatusNoContent)
@@ -339,119 +363,429 @@ func handlePodLogs(
 	writeJSON(writer, http.StatusOK, map[string]string{"logs": logs})
 }
 
-func handlePodLogStream(client *Client, writer http.ResponseWriter, req *http.Request, tailLines int64) {
+func handlePodLogStream(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+	tailLines int64,
+) {
 	flusher, ok := writer.(http.Flusher)
 	if !ok {
-		writeJSONError(writer, http.StatusInternalServerError, "Streaming unavailable")
+		writeJSONError(
+			writer, http.StatusInternalServerError, "Streaming unavailable",
+		)
+
 		return
 	}
-	stream, err := client.StreamPodLogs(req.Context(), req.PathValue(paramNamespace), req.PathValue(paramName), req.URL.Query().Get(paramContainer), tailLines)
+
+	stream, err := client.StreamPodLogs(
+		req.Context(),
+		req.PathValue(paramNamespace),
+		req.PathValue(paramName),
+		req.URL.Query().Get(paramContainer),
+		tailLines,
+	)
 	if err != nil {
 		writeError(writer, err)
+
 		return
 	}
+
 	defer closeLogStream(stream)
+
 	setSSEHeaders(writer)
-	scanner := bufio.NewScanner(stream)
-	for scanner.Scan() {
-		if err := writeSSE(writer, "log", scanner.Text()); err != nil {
+
+	// Commit the response now so EventSource opens even if the container
+	// stays quiet; headers are only sent on the first write or flush.
+	err = writeSSEHeartbeat(writer)
+	if err != nil {
+		return
+	}
+
+	flusher.Flush()
+
+	lines, scanDone := scanLogLines(req.Context(), stream)
+	streamLogEvents(req.Context(), writer, flusher, lines, scanDone)
+}
+
+// scanLogLines scans the log stream in a goroutine so the caller's write
+// loop can also tick heartbeats. Closing the stream unblocks the scanner and
+// the canceled context releases a goroutine blocked on send.
+func scanLogLines(
+	ctx context.Context,
+	stream io.Reader,
+) (<-chan string, <-chan error) {
+	lines := make(chan string)
+	scanDone := make(chan error, scanDoneBuffer)
+
+	go func() {
+		scanner := bufio.NewScanner(stream)
+		scanner.Buffer(make([]byte, logScanInitialBuf), logScanMaxBuf)
+
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		scanDone <- scanner.Err()
+	}()
+
+	return lines, scanDone
+}
+
+// streamLogEvents forwards scanned log lines as SSE events, ticking
+// heartbeats, until the client disconnects or the scan finishes.
+func streamLogEvents(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	lines <-chan string,
+	scanDone <-chan error,
+) {
+	ticker := time.NewTicker(sseHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		if !streamLogTick(ctx, writer, flusher, lines, scanDone, ticker.C) {
 			return
 		}
-		flusher.Flush()
 	}
 }
 
+// streamLogTick handles one wakeup of the log write loop; it reports whether
+// the loop should continue.
+func streamLogTick(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	lines <-chan string,
+	scanDone <-chan error,
+	heartbeat <-chan time.Time,
+) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-heartbeat:
+		err := writeSSEHeartbeat(writer)
+		if err != nil {
+			return false
+		}
+
+		flusher.Flush()
+
+		return true
+	case line := <-lines:
+		err := writeSSE(writer, "log", line)
+		if err != nil {
+			return false
+		}
+
+		flusher.Flush()
+
+		return true
+	case scanErr := <-scanDone:
+		writeLogEnd(writer, flusher, scanErr)
+
+		return false
+	}
+}
+
+// writeLogEnd tells the client the stream is over so it closes the
+// EventSource instead of auto-reconnecting and replaying the tail forever.
+// Error detail stays in the server log, matching writeError.
+func writeLogEnd(
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	scanErr error,
+) {
+	reason := "eof"
+
+	if scanErr != nil {
+		log.Printf("read log stream: %v", scanErr)
+
+		reason = "error"
+	}
+
+	err := writeSSE(writer, "end", map[string]string{"reason": reason})
+	if err != nil {
+		return
+	}
+
+	flusher.Flush()
+}
+
 type watchMessage struct {
+	Object   any    `json:"object,omitempty"`
 	Type     string `json:"type"`
 	Resource string `json:"resource"`
 	Key      string `json:"key"`
-	Object   any    `json:"object,omitempty"`
 }
+
 type resourceEvent struct {
-	resource string
 	event    watch.Event
+	resource string
 }
 
 func handleWatch(client *Client) http.HandlerFunc {
 	return func(writer http.ResponseWriter, req *http.Request) {
-		flusher, ok := writer.(http.Flusher)
-		if !ok {
-			writeJSONError(writer, http.StatusInternalServerError, "Streaming unavailable")
+		serveWatch(client, writer, req)
+	}
+}
+
+func serveWatch(
+	client *Client,
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		writeJSONError(
+			writer, http.StatusInternalServerError, "Streaming unavailable",
+		)
+
+		return
+	}
+
+	resources := parseWatchResources(req.URL.Query().Get("resources"))
+	if len(resources) == emptyCount || resources[emptyCount] == emptyString {
+		writeJSONError(writer, http.StatusBadRequest, "resources is required")
+
+		return
+	}
+
+	ctx, cancel := context.WithCancel(req.Context())
+	defer cancel()
+
+	events := make(chan resourceEvent)
+
+	watchers, err := openWatches(
+		ctx, client, req.URL.Query().Get(paramNamespace), resources, events,
+	)
+	if err != nil {
+		writeWatchError(writer, err)
+
+		return
+	}
+
+	defer stopWatchers(watchers)
+
+	setSSEHeaders(writer)
+
+	err = writeSSE(writer, "ready", map[string]any{"resources": resources})
+	if err != nil {
+		return
+	}
+
+	flusher.Flush()
+	streamWatchEvents(ctx, writer, flusher, events)
+}
+
+// parseWatchResources splits the ?resources= list and dedupes it so a single
+// request cannot open an unbounded number of upstream watches (only the
+// handful of supported kinds survive).
+func parseWatchResources(raw string) []string {
+	parts := strings.Split(raw, ",")
+	seen := make(map[string]bool, len(parts))
+	resources := make([]string, emptyCount, len(parts))
+
+	for _, resource := range parts {
+		resource = strings.TrimSpace(resource)
+		if seen[resource] {
+			continue
+		}
+
+		seen[resource] = true
+
+		resources = append(resources, resource)
+	}
+
+	return resources
+}
+
+// openWatches opens one upstream watch per resource and starts a forwarder
+// goroutine for each. On failure the already-opened watches are left to die
+// with ctx, matching the caller's cancel-on-return cleanup.
+func openWatches(
+	ctx context.Context,
+	client *Client,
+	namespace string,
+	resources []string,
+	events chan<- resourceEvent,
+) ([]watch.Interface, error) {
+	watchers := make([]watch.Interface, emptyCount, len(resources))
+
+	for _, resource := range resources {
+		stream, err := client.WatchResource(ctx, resource, namespace)
+		if err != nil {
+			return nil, err
+		}
+
+		watchers = append(watchers, stream)
+
+		go forwardWatch(ctx, resource, stream, events)
+	}
+
+	return watchers, nil
+}
+
+func stopWatchers(watchers []watch.Interface) {
+	for _, stream := range watchers {
+		stream.Stop()
+	}
+}
+
+// writeWatchError reports a watch-open failure: an unsupported resource name
+// is a client error, anything else surfaces through writeError.
+func writeWatchError(writer http.ResponseWriter, err error) {
+	if errors.Is(err, errUnsupportedResource) {
+		writeJSONError(writer, http.StatusBadRequest, err.Error())
+
+		return
+	}
+
+	writeError(writer, err)
+}
+
+// streamWatchEvents forwards upstream events as SSE frames, ticking
+// heartbeats, until the client disconnects or an upstream watch dies.
+func streamWatchEvents(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	events <-chan resourceEvent,
+) {
+	ticker := time.NewTicker(sseHeartbeatInterval)
+	defer ticker.Stop()
+
+	for {
+		if !watchTick(ctx, writer, flusher, events, ticker.C) {
 			return
-		}
-		resources := strings.Split(req.URL.Query().Get("resources"), ",")
-		if len(resources) == 0 || resources[0] == "" {
-			writeJSONError(writer, http.StatusBadRequest, "resources is required")
-			return
-		}
-		ctx, cancel := context.WithCancel(req.Context())
-		defer cancel()
-		events := make(chan resourceEvent)
-		watchers := make([]watch.Interface, 0, len(resources))
-		for _, resource := range resources {
-			resource = strings.TrimSpace(resource)
-			stream, err := client.WatchResource(ctx, resource, req.URL.Query().Get(paramNamespace))
-			if err != nil {
-				writeJSONError(writer, http.StatusBadRequest, err.Error())
-				return
-			}
-			watchers = append(watchers, stream)
-			go forwardWatch(ctx, resource, stream, events)
-		}
-		defer func() {
-			for _, stream := range watchers {
-				stream.Stop()
-			}
-		}()
-		setSSEHeaders(writer)
-		_ = writeSSE(writer, "ready", map[string]any{"resources": resources})
-		flusher.Flush()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case item := <-events:
-				message := transformWatchEvent(item.resource, item.event)
-				if err := writeSSE(writer, "resource", message); err != nil {
-					return
-				}
-				flusher.Flush()
-				if item.event.Type == watch.Error {
-					return
-				}
-			}
 		}
 	}
 }
 
-func forwardWatch(ctx context.Context, resource string, stream watch.Interface, out chan<- resourceEvent) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-stream.ResultChan():
-			if !ok {
-				select {
-				case out <- resourceEvent{resource: resource, event: watch.Event{Type: watch.Error}}:
-				case <-ctx.Done():
-				}
-				return
-			}
-			select {
-			case out <- resourceEvent{resource: resource, event: event}:
-			case <-ctx.Done():
-				return
-			}
+// watchTick handles one wakeup of the watch write loop; it reports whether
+// the loop should continue.
+func watchTick(
+	ctx context.Context,
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	events <-chan resourceEvent,
+	heartbeat <-chan time.Time,
+) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-heartbeat:
+		err := writeSSEHeartbeat(writer)
+		if err != nil {
+			return false
 		}
+
+		flusher.Flush()
+
+		return true
+	case item := <-events:
+		return writeWatchEvent(writer, flusher, item)
+	}
+}
+
+// writeWatchEvent forwards one upstream event; a watch.Error terminates the
+// stream so the client can reconnect with fresh state.
+func writeWatchEvent(
+	writer http.ResponseWriter,
+	flusher http.Flusher,
+	item resourceEvent,
+) bool {
+	message := transformWatchEvent(item.resource, item.event)
+
+	err := writeSSE(writer, "resource", message)
+	if err != nil {
+		return false
+	}
+
+	flusher.Flush()
+
+	return item.event.Type != watch.Error
+}
+
+// forwardWatch pumps events from one upstream watch into the shared channel.
+// A closed upstream surfaces as a watch.Error event so the write loop can
+// terminate the SSE stream.
+func forwardWatch(
+	ctx context.Context,
+	resource string,
+	stream watch.Interface,
+	out chan<- resourceEvent,
+) {
+	for {
+		if !forwardNextEvent(ctx, resource, stream, out) {
+			return
+		}
+	}
+}
+
+// forwardNextEvent waits for one upstream event and forwards it, sending the
+// watch.Error marker when the upstream has closed; it reports whether the
+// forward loop should continue.
+func forwardNextEvent(
+	ctx context.Context,
+	resource string,
+	stream watch.Interface,
+	out chan<- resourceEvent,
+) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case event, ok := <-stream.ResultChan():
+		if !ok {
+			closed := resourceEvent{
+				resource: resource,
+				event:    watch.Event{Type: watch.Error, Object: nil},
+			}
+			sendWatchEvent(ctx, out, closed)
+
+			return false
+		}
+
+		return sendWatchEvent(ctx, out, resourceEvent{
+			resource: resource,
+			event:    event,
+		})
+	}
+}
+
+// sendWatchEvent delivers one event, giving up when the request context
+// ends; it reports whether the send happened.
+func sendWatchEvent(
+	ctx context.Context,
+	out chan<- resourceEvent,
+	item resourceEvent,
+) bool {
+	select {
+	case out <- item:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
 func transformWatchEvent(resource string, event watch.Event) watchMessage {
-	message := watchMessage{Type: strings.ToLower(string(event.Type)), Resource: resource}
+	message := watchMessage{
+		Object:   nil,
+		Type:     strings.ToLower(string(event.Type)),
+		Resource: resource,
+		Key:      emptyString,
+	}
+
 	meta, ok := event.Object.(metav1.Object)
 	if ok {
 		message.Key = meta.GetNamespace() + "/" + meta.GetName()
 	}
+
 	switch object := event.Object.(type) {
 	case *corev1.Pod:
 		message.Object = transformPod(object)
@@ -465,30 +799,48 @@ func transformWatchEvent(resource string, event watch.Event) watchMessage {
 		message.Object = transformNamespace(*object)
 	case *corev1.Event:
 		message.Object = transformEvent(*object)
+	default:
 	}
+
 	return message
 }
 
 func setSSEHeaders(writer http.ResponseWriter) {
-	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set(headerContentType, "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
 	writer.Header().Set("X-Accel-Buffering", "no")
 }
+
+// writeSSEHeartbeat emits an SSE comment, which EventSource clients ignore.
+func writeSSEHeartbeat(writer io.Writer) error {
+	_, err := io.WriteString(writer, ": ping\n\n")
+	if err != nil {
+		return fmt.Errorf("write sse heartbeat: %w", err)
+	}
+
+	return nil
+}
+
 func writeSSE(writer io.Writer, event string, data any) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("encode sse data: %w", err)
 	}
+
 	_, err = fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", event, raw)
-	return err
+	if err != nil {
+		return fmt.Errorf("write sse event: %w", err)
+	}
+
+	return nil
 }
 
 // parseTailLines resolves the requested log tail length, falling back to a
 // default and clamping to maxTailLines. Invalid or non-positive input yields
 // the default.
 func parseTailLines(raw string) int64 {
-	if raw == "" {
+	if raw == emptyString {
 		return defaultTailLines
 	}
 
@@ -589,7 +941,7 @@ func handleEvents(
 // --- response helpers ---
 
 func writeJSON(writer http.ResponseWriter, status int, body any) {
-	writer.Header().Set("Content-Type", "application/json")
+	writer.Header().Set(headerContentType, "application/json")
 	writer.WriteHeader(status)
 
 	err := json.NewEncoder(writer).Encode(body)
@@ -625,7 +977,7 @@ func writeError(writer http.ResponseWriter, err error) {
 	msg := "Internal server error"
 
 	if status < http.StatusInternalServerError {
-		if text := http.StatusText(status); text != "" {
+		if text := http.StatusText(status); text != emptyString {
 			msg = text
 		}
 	}

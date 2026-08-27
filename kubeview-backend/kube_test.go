@@ -255,10 +255,11 @@ func newTestClient(
 	}
 
 	client := &Client{
-		clientset: clientset,
-		discovery: clientset.Discovery(),
-		context:   ktContextName,
-		cluster:   ktClusterName,
+		clientset:       clientset,
+		streamClientset: clientset,
+		discovery:       clientset.Discovery(),
+		context:         ktContextName,
+		cluster:         ktClusterName,
 	}
 
 	return client, clientset
@@ -1205,8 +1206,10 @@ func testGetClusterInfoZeroNodes(t *testing.T) {
 func testGetClusterInfoVersionErr(t *testing.T) {
 	t.Parallel()
 
+	clientset := fake.NewClientset()
 	client := &Client{
-		clientset: fake.NewClientset(),
+		clientset:       clientset,
+		streamClientset: clientset,
 		discovery: errDiscovery{
 			DiscoveryInterface: nil,
 			err:                errAPIUnreach,

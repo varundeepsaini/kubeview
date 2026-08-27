@@ -29,9 +29,14 @@ const emptyKubePath = ""
 // Client wraps a Kubernetes clientset plus contextual info from the kubeconfig.
 type Client struct {
 	clientset kubernetes.Interface
-	discovery discovery.DiscoveryInterface
-	context   string
-	cluster   string
+	// streamClientset carries no client-side timeout: watch and log-follow
+	// responses are open-ended, and http.Client.Timeout severs the whole
+	// exchange including the body read. Disconnects still end streams via
+	// request-context cancellation.
+	streamClientset kubernetes.Interface
+	discovery       discovery.DiscoveryInterface
+	context         string
+	cluster         string
 }
 
 // Node response shapes. JSON tags must match what the frontend expects in
@@ -265,41 +270,83 @@ func (c *Client) GetPodLogs(
 	return string(raw), nil
 }
 
-func (c *Client) StreamPodLogs(ctx context.Context, namespace, name, container string, tailLines int64) (io.ReadCloser, error) {
+func (c *Client) StreamPodLogs(
+	ctx context.Context,
+	namespace, name, container string,
+	tailLines int64,
+) (io.ReadCloser, error) {
 	if container == emptyKubePath {
 		pod, err := c.GetPod(ctx, namespace, name)
 		if err != nil {
 			return nil, err
 		}
+
 		container = defaultLogContainer(pod)
 	}
+
 	opts := podLogOptions(tailLines, container)
 	opts.Follow = true
-	stream, err := c.clientset.CoreV1().Pods(namespace).GetLogs(name, opts).Stream(ctx)
+
+	stream, err := c.streamClientset.CoreV1().
+		Pods(namespace).
+		GetLogs(name, opts).
+		Stream(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("open log stream: %w", err)
 	}
+
 	return stream, nil
 }
 
-func (c *Client) WatchResource(ctx context.Context, resource, namespace string) (watch.Interface, error) {
+// errUnsupportedResource marks a watch request for a resource kind this API
+// does not expose; handlers use it to report a client error instead of an
+// upstream failure.
+var errUnsupportedResource = errors.New("unsupported watch resource")
+
+//nolint:ireturn // client-go exposes watches only as watch.Interface.
+func (c *Client) WatchResource(
+	ctx context.Context,
+	resource, namespace string,
+) (watch.Interface, error) {
 	options := listOptions()
+
+	var (
+		stream watch.Interface
+		err    error
+	)
+
 	switch resource {
 	case "pods":
-		return c.clientset.CoreV1().Pods(namespace).Watch(ctx, options)
+		stream, err = c.streamClientset.CoreV1().
+			Pods(namespace).
+			Watch(ctx, options)
 	case "deployments":
-		return c.clientset.AppsV1().Deployments(namespace).Watch(ctx, options)
+		stream, err = c.streamClientset.AppsV1().
+			Deployments(namespace).
+			Watch(ctx, options)
 	case "services":
-		return c.clientset.CoreV1().Services(namespace).Watch(ctx, options)
+		stream, err = c.streamClientset.CoreV1().
+			Services(namespace).
+			Watch(ctx, options)
 	case "nodes":
-		return c.clientset.CoreV1().Nodes().Watch(ctx, options)
+		stream, err = c.streamClientset.CoreV1().Nodes().Watch(ctx, options)
 	case "namespaces":
-		return c.clientset.CoreV1().Namespaces().Watch(ctx, options)
+		stream, err = c.streamClientset.CoreV1().
+			Namespaces().
+			Watch(ctx, options)
 	case "events":
-		return c.clientset.CoreV1().Events(namespace).Watch(ctx, options)
+		stream, err = c.streamClientset.CoreV1().
+			Events(namespace).
+			Watch(ctx, options)
 	default:
-		return nil, fmt.Errorf("unsupported watch resource %q", resource)
+		return nil, fmt.Errorf("%w %q", errUnsupportedResource, resource)
 	}
+
+	if err != nil {
+		return nil, fmt.Errorf("watch %s: %w", resource, err)
+	}
+
+	return stream, nil
 }
 
 // defaultLogContainer picks the container a log request should target when
