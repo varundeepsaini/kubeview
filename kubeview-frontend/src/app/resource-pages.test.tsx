@@ -17,6 +17,7 @@ vi.mock("@/lib/api", () => ({
     getDaemonSets: vi.fn(),
   },
   eventSourceUrl: (path: string) => `http://test/api${path}`,
+  getApiAt: () => null,
 }));
 
 const mocked = vi.mocked(api);

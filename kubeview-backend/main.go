@@ -70,9 +70,14 @@ func run() error {
 	corsOrigins := parseCORSOrigins(os.Getenv("CORS_ORIGIN"))
 	log.Printf("CORS allowed origins: %v", corsOrigins)
 
+	// The flight recorder outlives requests; it stops (and the store closes)
+	// after the server has shut down.
+	history, stopHistory := setupHistory(manager)
+	defer stopHistory()
+
 	server := new(http.Server)
 	server.Addr = ":" + port
-	server.Handler = withCORS(newRouter(manager), corsOrigins)
+	server.Handler = withCORS(newRouter(manager, history), corsOrigins)
 	server.ReadTimeout = readTimeout
 	server.WriteTimeout = noWriteTimeout
 	server.IdleTimeout = idleTimeout

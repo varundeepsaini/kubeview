@@ -14,7 +14,7 @@ test.describe("statefulsets page", () => {
     page,
   }) => {
     await page.goto("/statefulsets");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByText("e2e-db", { exact: true }),

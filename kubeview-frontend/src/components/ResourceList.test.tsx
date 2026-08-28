@@ -10,6 +10,7 @@ vi.mock("@/lib/api", () => ({
     ]),
   },
   eventSourceUrl: (path: string) => `http://test/api${path}`,
+  getApiAt: () => null,
 }));
 
 interface Widget {

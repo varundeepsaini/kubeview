@@ -12,7 +12,7 @@ test.describe("configmaps page", () => {
 
   test("shows the seeded configmap with its keys", async ({ page }) => {
     await page.goto("/configmaps");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByText("e2e-config", { exact: true }),
@@ -31,7 +31,7 @@ test.describe("configmaps page", () => {
       page.getByRole("cell", { name: "kube-system", exact: true }).first(),
     ).toBeVisible();
 
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await expect(page.getByText("e2e-config", { exact: true })).toBeVisible();
     await expect(
       page.getByRole("cell", { name: "kube-system", exact: true }),

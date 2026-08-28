@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, use } from "react";
-import { api, Pod, podLogStreamUrl } from "@/lib/api";
+import { api, getApiAt, Pod, podLogStreamUrl } from "@/lib/api";
 import { usePolling } from "@/lib/hooks";
 import StatusBadge from "@/components/StatusBadge";
 import LoadingSpinner from "@/components/LoadingSpinner";
@@ -19,6 +19,11 @@ function appendLogLines(current: string[], lines: string[]): string[] {
 
 export default function PodDetailPage({ params }: { params: Promise<{ namespace: string; name: string }> }) {
   const { namespace, name } = use(params);
+  // In time-travel mode the pod is a historical snapshot: logs cannot be
+  // streamed from a past moment, so the logs tab shows a notice instead.
+  // Read once at mount — ClusterScope remounts this page when the scrubber
+  // commits a new moment.
+  const viewingPast = getApiAt() !== null;
   const [activeTab, setActiveTab] = useState<"overview" | "logs">("overview");
   const [selectedContainer, setSelectedContainer] = useState<string>("");
   const [logs, setLogs] = useState<string[]>([]);
@@ -138,7 +143,8 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
               // Restart whenever no stream is live (never started, ended, or
               // failed), not just when the pane is empty: after an "end" or a
               // fatal error the stale tail keeps logs.length > 0 forever.
-              if (tab === "logs" && !logSource.current) streamLogs(activeContainer);
+              // Never stream in past mode: the snapshot has no live logs.
+              if (tab === "logs" && !viewingPast && !logSource.current) streamLogs(activeContainer);
             }}
             className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
@@ -248,6 +254,15 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
             </div>
           )}
         </div>
+      ) : viewingPast ? (
+        /* Logs Tab, past mode: streaming makes no sense for a snapshot. */
+        <div className="bg-card border border-border rounded-xl p-8 text-center">
+          <p className="text-sm text-muted">
+            Logs are unavailable while viewing past cluster state — the flight
+            recorder stores resource state, not log streams. Return to live to
+            tail this pod&apos;s logs.
+          </p>
+        </div>
       ) : (
         /* Logs Tab */
         <div className="bg-card border border-border rounded-xl p-5">
@@ -261,6 +276,9 @@ export default function PodDetailPage({ params }: { params: Promise<{ namespace:
                     setSelectedContainer(e.target.value);
                     streamLogs(e.target.value);
                   }}
+                  // Accessible name distinguishes this from the sidebar's
+                  // context switcher combobox.
+                  aria-label="Container"
                   className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs focus:outline-none"
                 >
                   {pod.containers.map((c) => (

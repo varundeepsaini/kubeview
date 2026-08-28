@@ -13,6 +13,21 @@ export function setApiContext(name: string): void {
   currentContext = name;
 }
 
+// currentAt is the ambient time-travel moment (unix ms), or null for live.
+// When set, resource getters resolve from the flight recorder's
+// /history/state snapshot instead of the live endpoints, so every page
+// renders the cluster as of that moment without changing its own code.
+// TimeTravelProvider keeps this in sync with the timeline scrubber.
+let currentAt: number | null = null;
+
+export function setApiAt(at: number | null): void {
+  currentAt = at;
+}
+
+export function getApiAt(): number | null {
+  return currentAt;
+}
+
 // withContext appends the active context to a path, respecting any query string
 // the path already carries. Kept as string manipulation (not new URL) so a
 // relative NEXT_PUBLIC_API_BASE still works.
@@ -165,28 +180,148 @@ export interface Ingress { name: string; namespace: string; class: string; rules
 export interface StatefulSet { name: string; namespace: string; serviceName: string; replicas: number; desiredReplicas: number; readyReplicas: number; currentReplicas: number; updatedReplicas: number; strategy: string; age: string }
 export interface DaemonSet { name: string; namespace: string; desired: number; current: number; ready: number; updated: number; available: number; age: string }
 
+// --- flight recorder (time travel) ---
+
+export interface HistoryRange {
+  enabled: boolean;
+  // start/end are RFC3339; start is absent until anything has been recorded.
+  start?: string;
+  end?: string;
+  retentionHours?: number;
+}
+
+export interface HistoryResources {
+  pods: Pod[];
+  deployments: Deployment[];
+  services: Service[];
+  nodes: NodeInfo[];
+  namespaces: Namespace[];
+  events: KubeEvent[];
+  configmaps: ConfigMap[];
+  secrets: Secret[];
+  ingresses: Ingress[];
+  statefulsets: StatefulSet[];
+  daemonsets: DaemonSet[];
+}
+
+export interface HistoryState {
+  at: string;
+  resources: HistoryResources;
+}
+
+export interface HistoryChange {
+  resource: string;
+  key: string;
+  type: "added" | "removed" | "modified";
+  summary: string[];
+  before?: unknown;
+  after?: unknown;
+}
+
+export interface HistoryDiff {
+  from: string;
+  to: string;
+  changes: HistoryChange[];
+  events: KubeEvent[];
+}
+
+// One state snapshot serves every page rendered for a given (context, at)
+// pair: the pages all remount together when the scrubber commits, so their
+// concurrent getX calls share a single in-flight /history/state request.
+let historyStateCache: { key: string; promise: Promise<HistoryState> } | null =
+  null;
+
+function fetchHistoryState(at: number): Promise<HistoryState> {
+  const key = `${currentContext}|${at}`;
+  if (historyStateCache?.key === key) return historyStateCache.promise;
+  const promise = fetchApi<HistoryState>(`/history/state?at=${at}`);
+  // A failed snapshot must not be cached, or retry buttons would replay the
+  // same rejection forever.
+  promise.catch(() => {
+    if (historyStateCache?.promise === promise) historyStateCache = null;
+  });
+  historyStateCache = { key, promise };
+  return promise;
+}
+
+// historySlice resolves one resource kind from the snapshot, applying the
+// same namespace filter the live endpoints implement server-side.
+async function historySlice<K extends keyof HistoryResources>(
+  kind: K,
+  at: number,
+  ns?: string
+): Promise<HistoryResources[K]> {
+  const state = await fetchHistoryState(at);
+  const items = state.resources[kind] ?? [];
+  if (!ns) return items;
+  return items.filter(
+    (item) => (item as { namespace?: string }).namespace === ns
+  ) as HistoryResources[K];
+}
+
 export const api = {
   getContexts: () => fetchApi<ContextInfo[]>("/contexts"),
   getCluster: () => fetchApi<ClusterInfo>("/cluster"),
-  getNamespaces: () => fetchApi<Namespace[]>("/namespaces"),
-  getPods: (ns?: string) => fetchApi<Pod[]>(ns ? `/pods?namespace=${ns}` : "/pods"),
-  getPod: (ns: string, name: string) => fetchApi<Pod>(`/pods/${ns}/${name}`),
+  getNamespaces: () =>
+    currentAt !== null
+      ? historySlice("namespaces", currentAt)
+      : fetchApi<Namespace[]>("/namespaces"),
+  getPods: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("pods", currentAt, ns)
+      : fetchApi<Pod[]>(ns ? `/pods?namespace=${ns}` : "/pods"),
+  getPod: async (ns: string, name: string): Promise<Pod> => {
+    if (currentAt === null) return fetchApi<Pod>(`/pods/${ns}/${name}`);
+    const pods = await historySlice("pods", currentAt, ns);
+    const pod = pods.find((item) => item.name === name);
+    if (!pod) throw new Error("Pod not found at this moment in history");
+    return pod;
+  },
   getPodLogs: (ns: string, name: string, container?: string) =>
     fetchApi<{ logs: string }>(
       `/pods/${ns}/${name}/logs${container ? `?container=${container}` : ""}`
     ),
   getDeployments: (ns?: string) =>
-    fetchApi<Deployment[]>(ns ? `/deployments?namespace=${ns}` : "/deployments"),
+    currentAt !== null
+      ? historySlice("deployments", currentAt, ns)
+      : fetchApi<Deployment[]>(ns ? `/deployments?namespace=${ns}` : "/deployments"),
   getServices: (ns?: string) =>
-    fetchApi<Service[]>(ns ? `/services?namespace=${ns}` : "/services"),
-  getNodes: () => fetchApi<NodeInfo[]>("/nodes"),
+    currentAt !== null
+      ? historySlice("services", currentAt, ns)
+      : fetchApi<Service[]>(ns ? `/services?namespace=${ns}` : "/services"),
+  getNodes: () =>
+    currentAt !== null
+      ? historySlice("nodes", currentAt)
+      : fetchApi<NodeInfo[]>("/nodes"),
   getEvents: (ns?: string) =>
-    fetchApi<KubeEvent[]>(ns ? `/events?namespace=${ns}` : "/events"),
-  getConfigMaps: (ns?: string) => fetchApi<ConfigMap[]>(ns ? `/configmaps?namespace=${encodeURIComponent(ns)}` : "/configmaps"),
-  getSecrets: (ns?: string) => fetchApi<Secret[]>(ns ? `/secrets?namespace=${encodeURIComponent(ns)}` : "/secrets"),
-  getIngresses: (ns?: string) => fetchApi<Ingress[]>(ns ? `/ingresses?namespace=${encodeURIComponent(ns)}` : "/ingresses"),
-  getStatefulSets: (ns?: string) => fetchApi<StatefulSet[]>(ns ? `/statefulsets?namespace=${encodeURIComponent(ns)}` : "/statefulsets"),
-  getDaemonSets: (ns?: string) => fetchApi<DaemonSet[]>(ns ? `/daemonsets?namespace=${encodeURIComponent(ns)}` : "/daemonsets"),
+    currentAt !== null
+      ? historySlice("events", currentAt, ns)
+      : fetchApi<KubeEvent[]>(ns ? `/events?namespace=${ns}` : "/events"),
+  getConfigMaps: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("configmaps", currentAt, ns)
+      : fetchApi<ConfigMap[]>(ns ? `/configmaps?namespace=${encodeURIComponent(ns)}` : "/configmaps"),
+  getSecrets: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("secrets", currentAt, ns)
+      : fetchApi<Secret[]>(ns ? `/secrets?namespace=${encodeURIComponent(ns)}` : "/secrets"),
+  getIngresses: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("ingresses", currentAt, ns)
+      : fetchApi<Ingress[]>(ns ? `/ingresses?namespace=${encodeURIComponent(ns)}` : "/ingresses"),
+  getStatefulSets: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("statefulsets", currentAt, ns)
+      : fetchApi<StatefulSet[]>(ns ? `/statefulsets?namespace=${encodeURIComponent(ns)}` : "/statefulsets"),
+  getDaemonSets: (ns?: string) =>
+    currentAt !== null
+      ? historySlice("daemonsets", currentAt, ns)
+      : fetchApi<DaemonSet[]>(ns ? `/daemonsets?namespace=${encodeURIComponent(ns)}` : "/daemonsets"),
+  // History endpoints are always live: the range powers the scrubber and the
+  // diff view compares two explicit moments.
+  getHistoryRange: () => fetchApi<HistoryRange>("/history/range"),
+  getHistoryDiff: (from: number, to: number) =>
+    fetchApi<HistoryDiff>(`/history/diff?from=${from}&to=${to}`),
 };
 
 // eventSourceUrl carries the active context like fetchApi does: watch and

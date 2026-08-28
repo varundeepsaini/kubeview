@@ -31,6 +31,7 @@ const expectedNav: [string, string][] = [
   ["DaemonSets", "/daemonsets"],
   ["Events", "/events"],
   ["Nodes", "/nodes"],
+  ["Timeline", "/timeline"],
 ];
 
 // Sidebar embeds the ContextSwitcher, which needs the ClusterProvider and

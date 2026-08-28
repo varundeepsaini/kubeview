@@ -317,25 +317,25 @@ func (c *Client) WatchResource(
 	)
 
 	switch resource {
-	case "pods":
+	case resourcePods:
 		stream, err = c.streamClientset.CoreV1().
 			Pods(namespace).
 			Watch(ctx, options)
-	case "deployments":
+	case resourceDeployments:
 		stream, err = c.streamClientset.AppsV1().
 			Deployments(namespace).
 			Watch(ctx, options)
-	case "services":
+	case resourceServices:
 		stream, err = c.streamClientset.CoreV1().
 			Services(namespace).
 			Watch(ctx, options)
-	case "nodes":
+	case resourceNodes:
 		stream, err = c.streamClientset.CoreV1().Nodes().Watch(ctx, options)
-	case "namespaces":
+	case resourceNamespaces:
 		stream, err = c.streamClientset.CoreV1().
 			Namespaces().
 			Watch(ctx, options)
-	case "events":
+	case resourceEvents:
 		stream, err = c.streamClientset.CoreV1().
 			Events(namespace).
 			Watch(ctx, options)

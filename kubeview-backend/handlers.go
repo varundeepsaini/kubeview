@@ -164,16 +164,18 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 	return http.HandlerFunc(handler)
 }
 
-func newRouter(manager *ClientManager) *http.ServeMux {
+func newRouter(manager *ClientManager, history *historyAPI) *http.ServeMux {
 	const (
 		podDetailRoute = "GET /api/pods/{namespace}/{name}"
 		podLogsRoute   = "GET /api/pods/{namespace}/{name}/logs"
 	)
 
 	// wrap binds a resource handler to the manager so per-request client
-	// resolution (from ?context=) happens in one place.
+	// resolution (from ?context=) happens in one place. Routing through the
+	// history API starts the context's flight recorder on first use (a no-op
+	// when history is disabled).
 	wrap := func(handler contextHandler) http.HandlerFunc {
-		return withClient(manager, handler)
+		return withClient(manager, history.recording(handler))
 	}
 
 	mux := http.NewServeMux()
@@ -198,6 +200,9 @@ func newRouter(manager *ClientManager) *http.ServeMux {
 			handleWatch(client)(writer, req)
 		},
 	))
+	mux.HandleFunc("GET /api/history/range", wrap(history.handleRange))
+	mux.HandleFunc("GET /api/history/state", wrap(history.handleState))
+	mux.HandleFunc("GET /api/history/diff", wrap(history.handleDiff))
 
 	return mux
 }

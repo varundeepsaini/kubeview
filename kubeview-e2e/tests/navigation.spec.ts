@@ -8,6 +8,7 @@ const pages = [
   { link: "Services", heading: "Services", path: "/services" },
   { link: "Events", heading: "Events", path: "/events" },
   { link: "Nodes", heading: "Nodes", path: "/nodes" },
+  { link: "Timeline", heading: "Timeline", path: "/timeline" },
 ];
 
 test.describe("sidebar navigation", () => {

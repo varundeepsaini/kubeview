@@ -3,7 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import { ClusterProvider } from "@/components/ClusterProvider";
+import { TimeTravelProvider } from "@/components/TimeTravelProvider";
 import ClusterScope from "@/components/ClusterScope";
+import TimelineBar from "@/components/TimelineBar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -31,8 +33,11 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}
       >
         <ClusterProvider>
-          <Sidebar />
-          <ClusterScope>{children}</ClusterScope>
+          <TimeTravelProvider>
+            <Sidebar />
+            <TimelineBar />
+            <ClusterScope>{children}</ClusterScope>
+          </TimeTravelProvider>
         </ClusterProvider>
       </body>
     </html>

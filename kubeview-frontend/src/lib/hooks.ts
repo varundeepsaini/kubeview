@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { eventSourceUrl } from "./api";
+import { eventSourceUrl, getApiAt } from "./api";
+
+// Time travel note: when the timeline scrubber pins a past moment
+// (getApiAt() !== null), ClusterScope remounts every page, so each hook
+// reads the moment once at mount. Data hooks fetch a single frozen snapshot
+// (the api layer resolves it from /history/state) and skip polling and live
+// watches entirely — a paused cluster must not tick or stream.
 
 export function usePolling<T>(
   fetcher: () => Promise<T>,
@@ -25,6 +31,7 @@ export function usePolling<T>(
 
   useEffect(() => {
     refresh();
+    if (getApiAt() !== null) return;
     const id = setInterval(refresh, interval);
     return () => clearInterval(id);
   }, [refresh, interval]);
@@ -35,10 +42,13 @@ export function usePolling<T>(
 const ageTickMs = 30000;
 
 // Watch-driven tables only re-render when a watch event lands, so relative
-// times baked in at fetch time would freeze; tick so they stay current.
+// times baked in at fetch time would freeze; tick so they stay current. In
+// past mode the viewed moment is "now": ages must read relative to it, not
+// the wall clock, or everything would look older than it was.
 export function useNow(intervalMs: number = ageTickMs): number {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => getApiAt() ?? Date.now());
   useEffect(() => {
+    if (getApiAt() !== null) return;
     const id = setInterval(() => setNow(Date.now()), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
@@ -229,6 +239,13 @@ export function useWatchList<T extends { name: string; namespace?: string }>(fet
   }, [fetcher]);
   useEffect(() => {
     refresh();
+    // Past mode: the snapshot is frozen — no live watch to subscribe to.
+    if (getApiAt() !== null) {
+      return () => {
+        if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
+        refreshToken.current += 1;
+      };
+    }
     const unsubscribe = subscribeWatch(namespace, {
       resource,
       onMessage: (raw) => {

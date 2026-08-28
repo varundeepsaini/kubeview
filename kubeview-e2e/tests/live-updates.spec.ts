@@ -46,21 +46,16 @@ spec:
 `;
 
 test.describe("live watch updates", () => {
-  test.beforeAll(() => {
-    kubectl("apply -f -", namespaceManifest(NS));
-  });
-
-  test.afterAll(() => {
-    // Wait for full deletion so a CI retry's beforeAll can recreate the
-    // namespace instead of failing against one stuck in Terminating.
-    kubectl(`delete namespace ${NS} --ignore-not-found --wait=true`);
-  });
-
   test("pod create and delete update /pods without a reload", async ({
     page,
   }) => {
-    // A previous attempt (CI retry) may have left the pod behind.
-    kubectl(`delete pod ${POD} -n ${NS} --ignore-not-found --wait=true`);
+    // The namespace lives inside this test alone: fullyParallel runs each
+    // test in its own worker and workers re-run describe-level hooks, so a
+    // shared beforeAll/afterAll namespace races its own deletion in the
+    // sibling worker. Waiting out a leftover (possibly Terminating)
+    // namespace first also makes retries self-healing.
+    kubectl(`delete namespace ${NS} --ignore-not-found --wait=true`);
+    kubectl("apply -f -", namespaceManifest(NS));
 
     await page.goto("/pods");
     // Selecting the namespace triggers one filtered list fetch; wait for it
@@ -73,7 +68,7 @@ test.describe("live watch updates", () => {
           url.searchParams.get("namespace") === NS
         );
       }),
-      page.getByRole("combobox").selectOption(NS),
+      page.getByRole("combobox", { name: "Filter by namespace" }).selectOption(NS),
     ]);
     const link = page.getByRole("link", { name: POD, exact: true });
     await expect(link).toHaveCount(0);
@@ -94,7 +89,9 @@ test.describe("live watch updates", () => {
       // through the error-fallback re-list.
       expect(listRequests).toEqual([]);
     } finally {
-      kubectl(`delete pod ${POD} -n ${NS} --ignore-not-found --wait=false`);
+      // Deleting the namespace tears the pod down with it; the next attempt
+      // waits out the termination before recreating.
+      kubectl(`delete namespace ${NS} --ignore-not-found --wait=false`);
     }
   });
 

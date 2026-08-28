@@ -18,6 +18,7 @@ const nav = [
   { href: "/daemonsets", label: "DaemonSets", icon: "server" },
   { href: "/events", label: "Events", icon: "bell" },
   { href: "/nodes", label: "Nodes", icon: "server" },
+  { href: "/timeline", label: "Timeline", icon: "clock" },
 ];
 
 const icons: Record<string, React.ReactNode> = {
@@ -59,6 +60,11 @@ const icons: Record<string, React.ReactNode> = {
   lock: (
     <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 00-9 0v3.75m-.75 0h10.5A2.25 2.25 0 0119.5 12.75v6A2.25 2.25 0 0117.25 21H6.75a2.25 2.25 0 01-2.25-2.25v-6a2.25 2.25 0 012.25-2.25z" />
+    </svg>
+  ),
+  clock: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
     </svg>
   ),
 };

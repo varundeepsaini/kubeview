@@ -10,6 +10,7 @@ A lightweight web dashboard for monitoring a Kubernetes cluster. KubeView talks 
 - Namespace, pod, deployment, service, and node browsers with search and namespace filters
 - Pod detail view with container info, conditions, volumes, and live log tail
 - Auto-refresh every 5 seconds across every page
+- **Cluster flight recorder** — records resource state changes and events into an embedded store (72h ring buffer by default); a timeline scrubber in the top bar re-renders every page as of any past moment, and the Timeline page diffs two moments (pod restarts, image changes, replica scaling, condition transitions) alongside the events that fired in between
 - Read-only by design — never mutates cluster state
 
 ## Architecture
@@ -62,6 +63,8 @@ Both services default to localhost ports but can be configured for non-local dep
 | `PORT` | backend | `5501` | Port the API listens on. Note: `next start` (frontend production mode) also reads `PORT`, so give each service its own value when they share an environment. |
 | `CORS_ORIGIN` | backend | `http://localhost:5500` | Comma-separated list of allowed browser origins, e.g. `https://kubeview.example.com,http://localhost:5500`. Origins must match the browser's `Origin` header exactly (scheme + host + port, no trailing slash); requests from unlisted origins get no CORS headers. |
 | `KUBECONFIG` | backend | `~/.kube/config` | Kubeconfig path(s) used to reach the cluster; a colon-separated list is merged like `kubectl`. When unset and `~/.kube/config` is absent, the backend uses the in-cluster service account. |
+| `HISTORY_RETENTION_HOURS` | backend | `72` | How far back the cluster flight recorder keeps state for time travel. `0` (or negative) disables history recording entirely. |
+| `HISTORY_DIR` | backend | user cache dir | Directory holding the flight recorder's embedded store (`history.db`). Defaults to `~/.cache/kubeview` (falling back to the system temp dir); point it at a persistent volume in containers. |
 | `NEXT_PUBLIC_API_BASE` | frontend | `http://localhost:5501/api` | Backend API base URL, inlined at build time (`npm run build`). |
 
 Example:
@@ -128,6 +131,9 @@ The backend exposes the following endpoints. All responses are JSON.
 | GET | `/api/services?namespace=<ns>` | Services |
 | GET | `/api/nodes` | Cluster nodes |
 | GET | `/api/events?namespace=<ns>` | Recent cluster events |
+| GET | `/api/history/range` | Flight-recorder bounds: whether history is enabled, and the recorded window |
+| GET | `/api/history/state?at=<t>` | Cluster state as of a past moment (RFC3339 or unix ms) |
+| GET | `/api/history/diff?from=<t1>&to=<t2>` | What changed between two moments, plus the events that fired in between |
 
 ## Screenshots
 
@@ -153,6 +159,9 @@ kubeview/
 │   ├── kube.go              # kubeconfig loading + client-go wrappers
 │   ├── handlers.go          # HTTP handlers, router, CORS, error helpers
 │   ├── transformers.go      # Reshape K8s objects into frontend JSON
+│   ├── history_store.go     # Flight recorder: embedded bbolt store (delta versions, retention pruning)
+│   ├── history_recorder.go  # Flight recorder: per-context informers feeding the store
+│   ├── history_handlers.go  # /api/history/* endpoints (range, state-at, diff)
 │   ├── go.mod
 │   └── go.sum
 ├── kubeview-frontend/       # Next.js dashboard (port 5500)
