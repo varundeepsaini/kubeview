@@ -22,7 +22,7 @@ test.describe("multi-container pod", () => {
     await page.getByRole("button", { name: "Logs" }).click();
 
     // The picker only renders for multi-container pods, with both containers.
-    const picker = page.getByRole("combobox");
+    const picker = page.getByRole("combobox", { name: "Container" });
     await expect(picker).toBeVisible();
     await expect(picker.getByRole("option")).toHaveCount(2);
 

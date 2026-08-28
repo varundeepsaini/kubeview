@@ -34,6 +34,12 @@ spec:
             # Must match how you expose the frontend Service.
             - name: CORS_ORIGIN
               value: http://localhost:5500
+            # Flight-recorder store. The root filesystem is read-only, so
+            # history lives on the emptyDir below — it survives container
+            # restarts but not pod rescheduling; swap in a PVC to keep
+            # history across pod restarts.
+            - name: HISTORY_DIR
+              value: /var/lib/kubeview
           ports:
             - containerPort: 5501
               name: http
@@ -56,6 +62,14 @@ spec:
               memory: 64Mi
             limits:
               memory: 256Mi
+          volumeMounts:
+            - name: history
+              mountPath: /var/lib/kubeview
+      volumes:
+        - name: history
+          emptyDir:
+            # Bound so 72h of a busy cluster's deltas cannot evict the node.
+            sizeLimit: 1Gi
 ---
 apiVersion: v1
 kind: Service

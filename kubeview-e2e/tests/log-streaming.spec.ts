@@ -52,7 +52,7 @@ test.describe("log streaming", () => {
     await openLogs(page, "/pods/e2e-demo/e2e-multi");
     await expect(page.getByText("E2E_MAIN_MARKER").first()).toBeVisible();
 
-    await page.getByRole("combobox").selectOption("sidecar");
+    await page.getByRole("combobox", { name: "Container" }).selectOption("sidecar");
     const sidecarLines = page.getByText("E2E_SIDECAR_MARKER");
     await expect(sidecarLines.first()).toBeVisible();
     // Switching restarts the stream, so no main-container output survives.

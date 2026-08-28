@@ -140,8 +140,14 @@ func getAge(t metav1.Time) string {
 		return statusUnknown
 	}
 
-	d := time.Since(t.Time)
-	secs := int(d.Seconds())
+	return ageBetween(t.Time, time.Now())
+}
+
+// ageBetween renders the elapsed time between two moments. The reference is a
+// parameter so history reads can compute ages as of the viewed moment rather
+// than now.
+func ageBetween(created, ref time.Time) string {
+	secs := int(ref.Sub(created).Seconds())
 	// A future creationTimestamp (clock skew) yields a negative duration; clamp
 	// to 0 so the UI shows "0s" instead of a nonsensical "-5s".
 	secs = max(secs, zeroCount)

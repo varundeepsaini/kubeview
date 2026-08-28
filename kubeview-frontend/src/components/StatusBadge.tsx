@@ -16,6 +16,10 @@ const statusColors: Record<string, string> = {
   Error: "bg-red-500/15 text-red-400 border-red-500/30",
   NotReady: "bg-red-500/15 text-red-400 border-red-500/30",
   Unknown: "bg-gray-500/15 text-gray-400 border-gray-500/30",
+  // Timeline diff change types.
+  added: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+  removed: "bg-red-500/15 text-red-400 border-red-500/30",
+  modified: "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
 };
 
 export default function StatusBadge({ status, size = "sm" }: StatusBadgeProps) {

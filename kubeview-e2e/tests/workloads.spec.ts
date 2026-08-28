@@ -2,13 +2,13 @@ import { test, expect } from "@playwright/test";
 
 test("deployments page shows the seeded deployment", async ({ page }) => {
   await page.goto("/deployments");
-  await page.getByRole("combobox").selectOption("e2e-demo");
+  await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
   await expect(page.getByText("e2e-web", { exact: true })).toBeVisible();
 });
 
 test("deployments search narrows the list", async ({ page }) => {
   await page.goto("/deployments");
-  await page.getByRole("combobox").selectOption("e2e-demo");
+  await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
   await expect(page.getByText("e2e-web", { exact: true })).toBeVisible();
   await page.getByPlaceholder(/Search/).fill("nonexistent-deploy");
   await expect(page.getByText("e2e-web", { exact: true })).toHaveCount(0);
@@ -16,7 +16,7 @@ test("deployments search narrows the list", async ({ page }) => {
 
 test("services page shows the seeded service and its type", async ({ page }) => {
   await page.goto("/services");
-  await page.getByRole("combobox").selectOption("e2e-demo");
+  await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
   const row = page.locator("tr", {
     has: page.getByText("e2e-svc", { exact: true }),

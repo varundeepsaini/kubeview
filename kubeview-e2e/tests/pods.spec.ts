@@ -5,7 +5,7 @@ test.describe("pods page", () => {
     await page.goto("/pods");
 
     // Filter to the fixtures namespace so system pods don't crowd the table.
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     await expect(
       page.getByRole("link", { name: "e2e-logger", exact: true }),
@@ -17,7 +17,7 @@ test.describe("pods page", () => {
 
   test("search filters the pod list", async ({ page }) => {
     await page.goto("/pods");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await expect(
       page.getByRole("link", { name: "e2e-logger", exact: true }),
     ).toBeVisible();
@@ -36,7 +36,7 @@ test.describe("pods page", () => {
     page,
   }) => {
     await page.goto("/pods");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByRole("link", { name: "e2e-logger", exact: true }),
@@ -47,7 +47,7 @@ test.describe("pods page", () => {
 
   test("a non-matching search yields an empty table", async ({ page }) => {
     await page.goto("/pods");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await expect(
       page.getByRole("link", { name: "e2e-logger", exact: true }),
     ).toBeVisible();
@@ -58,7 +58,7 @@ test.describe("pods page", () => {
 
   test("clicking a pod name navigates to its detail page", async ({ page }) => {
     await page.goto("/pods");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await page.getByRole("link", { name: "e2e-logger", exact: true }).click();
 
     await expect(page).toHaveURL(/\/pods\/e2e-demo\/e2e-logger$/);

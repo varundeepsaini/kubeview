@@ -8,6 +8,19 @@
 # KUBECONFIG_HOST points at a single kubeconfig FILE on the host (a
 # colon-separated KUBECONFIG list is not supported here — pick one file).
 services:
+  # One-shot chown of the history volume. Docker creates a fresh named volume
+  # root-owned (the distroless backend image ships only the binary, so there
+  # is no image directory to seed ownership from), while the backend runs as
+  # an arbitrary host uid/gid — without this the flight recorder cannot open
+  # its store and starts with history disabled.
+  history-init:
+    image: busybox:stable
+    command: chown -R ${UID:-1000}:${GID:-1000} /var/lib/kubeview
+    volumes:
+      - type: volume
+        source: history
+        target: /var/lib/kubeview
+
   backend:
     build: ./kubeview-backend
     network_mode: host
@@ -15,9 +28,15 @@ services:
     # 1000 (the first-user default on most Linux desktops). If your uid/gid
     # differ, run: `UID=$(id -u) GID=$(id -g) docker compose up`.
     user: "${UID:-1000}:${GID:-1000}"
+    depends_on:
+      history-init:
+        condition: service_completed_successfully
     environment:
       KUBECONFIG: /kubeconfig
       CORS_ORIGIN: http://localhost:5500
+      # Flight-recorder store on a named volume so time-travel history
+      # survives container restarts.
+      HISTORY_DIR: /var/lib/kubeview
     volumes:
       - type: bind
         source: ${KUBECONFIG_HOST:-~/.kube/config}
@@ -27,6 +46,9 @@ services:
         # root-owned directory at its path.
         bind:
           create_host_path: false
+      - type: volume
+        source: history
+        target: /var/lib/kubeview
 
   frontend:
     build:
@@ -37,3 +59,6 @@ services:
       - "5500:3000"
     depends_on:
       - backend
+
+volumes:
+  history:

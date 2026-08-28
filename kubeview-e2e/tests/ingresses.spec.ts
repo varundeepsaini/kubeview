@@ -14,7 +14,7 @@ test.describe("ingresses page", () => {
     page,
   }) => {
     await page.goto("/ingresses");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByText("e2e-ing-paths", { exact: true }),
@@ -27,7 +27,7 @@ test.describe("ingresses page", () => {
     page,
   }) => {
     await page.goto("/ingresses");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     // Regression guard: a rule without an http section used to nil-panic the
     // backend. The ingress must still list, with an empty hosts/paths cell.

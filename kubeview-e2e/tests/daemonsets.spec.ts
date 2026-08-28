@@ -12,7 +12,7 @@ test.describe("daemonsets page", () => {
 
   test("shows the seeded daemonset with scheduling counts", async ({ page }) => {
     await page.goto("/daemonsets");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByText("e2e-agent", { exact: true }),
@@ -28,7 +28,7 @@ test.describe("daemonsets page", () => {
     // Unfiltered, kind's kube-system daemonsets are listed.
     await expect(page.getByText("kube-proxy", { exact: true })).toBeVisible();
 
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await expect(page.getByText("e2e-agent", { exact: true })).toBeVisible();
     await expect(page.getByText("kube-proxy", { exact: true })).toHaveCount(0);
   });

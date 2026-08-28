@@ -14,7 +14,7 @@ test.describe("secrets page", () => {
     page,
   }) => {
     await page.goto("/secrets");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
 
     const row = page.locator("tr", {
       has: page.getByText("e2e-secret", { exact: true }),
@@ -27,7 +27,7 @@ test.describe("secrets page", () => {
 
   test("never exposes secret values or a reveal control", async ({ page }) => {
     await page.goto("/secrets");
-    await page.getByRole("combobox").selectOption("e2e-demo");
+    await page.getByRole("combobox", { name: "Filter by namespace" }).selectOption("e2e-demo");
     await expect(page.getByText("e2e-secret", { exact: true })).toBeVisible();
 
     // The plaintext fixture values must never reach the page.

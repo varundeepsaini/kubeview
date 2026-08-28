@@ -182,7 +182,7 @@ func newTestServer(
 	t.Helper()
 
 	c, _ := newTestClient(t, sv, objs...)
-	router := newRouter(managerForClient(c))
+	router := newRouter(managerForClient(c), nil)
 	srv := httptest.NewServer(withCORS(router, parseCORSOrigins(htEmpty)))
 	t.Cleanup(srv.Close)
 
@@ -412,7 +412,7 @@ func TestHandle_ContextParamRoutesToSelectedClient(t *testing.T) {
 	manager.defaultContext = ktContextName
 
 	srv := httptest.NewServer(
-		withCORS(newRouter(manager), parseCORSOrigins(htEmpty)),
+		withCORS(newRouter(manager, nil), parseCORSOrigins(htEmpty)),
 	)
 	t.Cleanup(srv.Close)
 
@@ -1041,7 +1041,7 @@ func TestCORS_ConfiguredOrigins(t *testing.T) {
 	)
 
 	origins := []string{htOriginExample, htACAOValue}
-	srv := httptest.NewServer(withCORS(newRouter(nil), origins))
+	srv := httptest.NewServer(withCORS(newRouter(nil, nil), origins))
 	t.Cleanup(srv.Close)
 
 	cases := []struct {
@@ -1076,7 +1076,7 @@ func TestCORS_WildcardFailsClosed(t *testing.T) {
 	)
 
 	srv := httptest.NewServer(
-		withCORS(newRouter(nil), parseCORSOrigins("*")),
+		withCORS(newRouter(nil, nil), parseCORSOrigins("*")),
 	)
 	t.Cleanup(srv.Close)
 
@@ -1094,7 +1094,7 @@ func TestCORS_GetEchoesConfiguredOrigin(t *testing.T) {
 	)
 
 	srv := httptest.NewServer(
-		withCORS(newRouter(nil), parseCORSOrigins(htOriginExample)),
+		withCORS(newRouter(nil, nil), parseCORSOrigins(htOriginExample)),
 	)
 	t.Cleanup(srv.Close)
 
