@@ -1,6 +1,6 @@
 # KubeView
 
-A lightweight, read-only web dashboard for inspecting Kubernetes clusters. KubeView combines resource views, live Kubernetes watch updates, pod-log streaming, multi-context switching, and recent historical replay in a browser-friendly companion to `kubectl`.
+A lightweight, read-only web dashboard for inspecting Kubernetes clusters — a browser-friendly companion to `kubectl`. KubeView gives you resource views with live watch updates, pod-log streaming, multi-context switching, and replay of recent cluster history.
 
 ![Dashboard](screenshots/01-dashboard.png)
 
