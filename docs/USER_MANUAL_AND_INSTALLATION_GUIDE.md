@@ -2,7 +2,7 @@
 
 KubeView is a read-only browser interface for Kubernetes. One local application gives you live resource inspection, pod-log streaming, kubeconfig context switching, and a bounded history of cluster state.
 
-This is the final user manual and installation guide for submission baseline `8ee601c`.
+This is the final user manual and installation guide for the submission baseline, tag `v1.0.0-submission`.
 
 ## Contents
 
@@ -72,7 +72,7 @@ Clone the repository and check out the frozen submission baseline:
 ```bash
 git clone https://github.com/varundeepsaini/kubeview.git
 cd kubeview
-git checkout 8ee601c
+git checkout v1.0.0-submission
 ```
 
 ### Start the backend
@@ -375,5 +375,5 @@ Delete a locally configured `HISTORY_DIR` only when you no longer need its recor
 ## Project reference
 
 - Repository: <https://github.com/varundeepsaini/kubeview>
-- Submission baseline: `8ee601c`
+- Submission baseline: tag `v1.0.0-submission`
 - Academic year: 2025-2026

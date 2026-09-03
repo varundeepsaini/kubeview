@@ -435,7 +435,7 @@ Go `testing` with `client-go` fakes, `httptest`, Vitest, @testing-library/react,
 
 ### Observations
 
-All suites pass on the final commit (`8ee601c`) in GitHub Actions CI: backend tests with `-race`, frontend unit tests, the lint jobs, CodeQL, govulncheck, and the full Playwright E2E job against a live kind cluster. See `docs/img/ci-runs.png` for the passing workflow runs.
+All suites pass on the submission baseline (tag `v1.0.0-submission`) in GitHub Actions CI: backend tests with `-race`, frontend unit tests, the lint jobs, CodeQL, govulncheck, and the full Playwright E2E job against a live kind cluster. See `docs/img/ci-runs.png` for the passing workflow runs.
 
 The real-cluster CI pipeline paid for itself. The E2E layer repeatedly caught integration regressions the unit layers couldn't see — JSON field-name mismatches between backend struct tags and frontend types, for one.
 

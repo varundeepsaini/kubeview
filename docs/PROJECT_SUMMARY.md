@@ -13,7 +13,7 @@
 - Varun Deep Saini (`2023EBCS663`)
 
 - **Source code:** <https://github.com/varundeepsaini/kubeview>
-- **Submission baseline:** `8ee601c`
+- **Submission baseline:** tag `v1.0.0-submission`
 
 ## Executive summary
 
