@@ -4,7 +4,7 @@ Go backend for KubeView. Serves the REST API on port `5501` consumed by `kubevie
 
 ## Prerequisites
 
-- Go 1.22 or later (uses the [Go 1.22 ServeMux pattern syntax](https://pkg.go.dev/net/http#hdr-Patterns))
+- Go 1.26 or later (matches `go.mod`; the router uses the [Go 1.22+ ServeMux pattern syntax](https://pkg.go.dev/net/http#hdr-Patterns))
 - A reachable Kubernetes cluster — `kubectl get nodes` should succeed
 
 ## Run
