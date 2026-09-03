@@ -156,7 +156,7 @@ The backend exposes the following endpoints. All responses are JSON.
 | **Namespaces** ![Namespaces](screenshots/02-namespaces.png) | **Pods** ![Pods](screenshots/03-pods.png) |
 | **Pod detail** ![Pod detail](screenshots/04-pod-detail.png) | **Pod logs** ![Pod logs](screenshots/05-pod-logs.png) |
 | **Deployments** ![Deployments](screenshots/05-deployments.png) | **Services** ![Services](screenshots/06-services.png) |
-| **Nodes** ![Nodes](screenshots/07-nodes.png) | |
+| **Nodes** ![Nodes](screenshots/07-nodes.png) | **Timeline diff** ![Timeline](screenshots/08-timeline.png) |
 
 ## Tech stack
 

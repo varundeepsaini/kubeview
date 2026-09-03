@@ -67,4 +67,4 @@ formatters:
       max-len: 120
     goimports:
       local-prefixes:
-        - github.com/ankur-kalita/kubeview
+        - github.com/varundeepsaini/kubeview

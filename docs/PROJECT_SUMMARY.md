@@ -120,7 +120,7 @@ There is no built-in user authentication. That's a stated deployment boundary, n
 Validation is layered:
 
 - **227 Go test functions** cover HTTP handlers, Kubernetes clients, object transformation, context isolation, live streams, history retention, tombstones, reconstruction, and diff logic.
-- **60 frontend unit tests** (Vitest and Testing Library) verify components, resource pages, context behaviour, historical mode, and timeline interaction.
+- **70 frontend unit tests** (Vitest and Testing Library) verify components, resource pages, context behaviour, historical mode, and timeline interaction.
 - **45 Playwright tests** run the real frontend and backend against a real `kind` cluster and drive actual browser workflows.
 - Backend CI runs compilation, formatting checks, `go vet`, the race detector, coverage collection, staticcheck, golangci-lint, and govulncheck.
 - Frontend CI runs TypeScript checking, ESLint, unit tests, and a production build.
