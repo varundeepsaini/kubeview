@@ -1,15 +1,22 @@
 # KubeView
 
-A lightweight web dashboard for monitoring a Kubernetes cluster. KubeView talks to your cluster through the standard kubeconfig and surfaces pods, deployments, services, nodes, namespaces, events, and pod logs in a clean, auto-refreshing UI — a browser-friendly companion to `kubectl get`.
+A lightweight, read-only web dashboard for inspecting Kubernetes clusters — a browser-friendly companion to `kubectl`. KubeView gives you resource views with live watch updates, pod-log streaming, multi-context switching, and replay of recent cluster history.
 
 ![Dashboard](screenshots/01-dashboard.png)
+
+## Project documentation
+
+- [Project summary with unique value proposition](docs/PROJECT_SUMMARY.md)
+- [User manual and installation guide](docs/USER_MANUAL_AND_INSTALLATION_GUIDE.md)
 
 ## Features
 
 - Cluster overview with live pod, deployment, and node health counts
-- Namespace, pod, deployment, service, and node browsers with search and namespace filters
-- Pod detail view with container info, conditions, volumes, and live log tail
-- Auto-refresh every 5 seconds across every page
+- Namespace, pod, deployment, service, node, event, ConfigMap, Secret, Ingress, StatefulSet, and DaemonSet views
+- Search and namespace filters for namespaced resources
+- Pod detail with regular, init, sidecar, and ephemeral containers, conditions, volumes, and live log tail
+- Live resource updates through Kubernetes watches and Server-Sent Events
+- Multi-context switching without restarting the application
 - **Cluster flight recorder** — records resource state changes and events into an embedded store (72h ring buffer by default); a timeline scrubber in the top bar re-renders every page as of any past moment, and the Timeline page diffs two moments (pod restarts, image changes, replica scaling, condition transitions) alongside the events that fired in between
 - Read-only by design — never mutates cluster state
 
@@ -18,7 +25,7 @@ A lightweight web dashboard for monitoring a Kubernetes cluster. KubeView talks 
 KubeView is a two-part application:
 
 - **`kubeview-backend/`** — Go API on port `5501`. Connects to your cluster using `k8s.io/client-go` (loads kubeconfig from the default location). Exposes a small REST API and reshapes raw Kubernetes objects into a frontend-friendly JSON shape.
-- **`kubeview-frontend/`** — Next.js 16 + React 19 + Tailwind v4 app on port `5500`. Polls the backend every 5 seconds and renders the data.
+- **`kubeview-frontend/`** — Next.js 16 + React 19 + Tailwind v4 app on port `5500`. Loads initial state through REST and receives later resource changes through Server-Sent Events.
 
 ```
 Browser  ──▶  Frontend (Next.js, :5500)  ──▶  Backend (Go, :5501)  ──▶  Kubernetes API
@@ -27,7 +34,7 @@ Browser  ──▶  Frontend (Next.js, :5500)  ──▶  Backend (Go, :5501)  �
 ## Prerequisites
 
 - **Go 1.26+** (for the backend)
-- **Node.js 18+** (for the frontend)
+- **Node.js 24** (recommended for the frontend and used by CI)
 - **A running Kubernetes cluster** reachable from your kubeconfig — Docker Desktop's built-in Kubernetes, [kind](https://kind.sigs.k8s.io/), [minikube](https://minikube.sigs.k8s.io/), or any remote cluster all work.
 - **kubectl** configured. Verify with:
   ```bash
@@ -49,7 +56,7 @@ The API is now running at http://localhost:5501. You can sanity-check it with `c
 **Terminal 2 — frontend:**
 ```bash
 cd kubeview-frontend
-npm install
+npm ci
 npm run dev
 ```
 The dashboard is now running at http://localhost:5500. Open it in your browser.
@@ -122,6 +129,7 @@ The backend exposes the following endpoints. All responses are JSON.
 | Method | Path | Description |
 | --- | --- | --- |
 | GET | `/api/health` | Health check |
+| GET | `/api/contexts` | Available kubeconfig contexts |
 | GET | `/api/cluster` | Cluster version, platform, node count, current context |
 | GET | `/api/namespaces` | All namespaces |
 | GET | `/api/pods?namespace=<ns>` | Pods (optionally filtered by namespace) |
@@ -131,6 +139,12 @@ The backend exposes the following endpoints. All responses are JSON.
 | GET | `/api/services?namespace=<ns>` | Services |
 | GET | `/api/nodes` | Cluster nodes |
 | GET | `/api/events?namespace=<ns>` | Recent cluster events |
+| GET | `/api/configmaps?namespace=<ns>` | ConfigMaps |
+| GET | `/api/secrets?namespace=<ns>` | Secret metadata, key names, and value lengths; values are not returned |
+| GET | `/api/ingresses?namespace=<ns>` | Ingresses |
+| GET | `/api/statefulsets?namespace=<ns>` | StatefulSets |
+| GET | `/api/daemonsets?namespace=<ns>` | DaemonSets |
+| GET | `/api/watch?resources=<types>` | Multiplexed Server-Sent Event stream for live resource updates |
 | GET | `/api/history/range` | Flight-recorder bounds: whether history is enabled, and the recorded window |
 | GET | `/api/history/state?at=<t>` | Cluster state as of a past moment (RFC3339 or unix ms) |
 | GET | `/api/history/diff?from=<t1>&to=<t2>` | What changed between two moments, plus the events that fired in between |
@@ -168,7 +182,7 @@ kubeview/
 │   ├── src/
 │   │   ├── app/             # App Router pages
 │   │   ├── components/      # Sidebar, filters, badges, ...
-│   │   └── lib/             # API client + polling hook
+│   │   └── lib/             # API client + REST/SSE data hooks
 │   └── package.json
 └── screenshots/             # Images used in this README
 ```
